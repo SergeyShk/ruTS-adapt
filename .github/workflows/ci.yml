@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --locked --no-default-groups --group lint
+      - name: Ruff
+        run: |
+          uv run --no-sync ruff check ruts_adapt tests
+          uv run --no-sync ruff format ruts_adapt tests --check
+      - name: Mypy
+        run: uv run --no-sync mypy
+
+  test:
+    name: test (${{ matrix.python-version }}${{ matrix.os != 'ubuntu-latest' && format(', {0}', matrix.os) || '' }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --locked --no-default-groups --group test
+      # Тесты с маркером llm исключены в addopts: CI не ходит в API модели
+      - name: Run tests
+        run: uv run --no-sync pytest --cov ruts_adapt
