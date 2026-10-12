@@ -1,5 +1,6 @@
 import importlib
 import io
+import os
 import runpy
 import sys
 from importlib.metadata import version
@@ -171,17 +172,24 @@ def test_file_errors(tmp_path, capsys, make, reason):
     assert error.endswith(f"ruts-adapt: ошибка: не удалось прочитать {path}: {reason}\n")
 
 
-def test_file_other_error(capsys, monkeypatch):
-    """Прочие ошибки чтения печатаются с сообщением системы"""
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (PermissionError(13, "Permission denied"), "нет доступа"),
+        (OSError(5, "Input/output error"), "[Errno 5] Input/output error"),
+    ],
+    ids=["permission", "other"],
+)
+def test_file_os_errors(capsys, monkeypatch, failure, reason):
+    """Нет доступа - по-русски, прочие ошибки чтения - с сообщением системы"""
 
     def broken(encoding):
-        raise OSError(5, "Input/output error")
+        raise failure
 
-    monkeypatch.setattr(cli, "Path", lambda file: SimpleNamespace(read_text=broken))
+    path = SimpleNamespace(is_dir=lambda: False, read_text=broken)
+    monkeypatch.setattr(cli, "Path", lambda file: path)
     error = fail(capsys, ["-g", "2", "текст.txt"])
-    assert error.endswith(
-        "ruts-adapt: ошибка: не удалось прочитать текст.txt: [Errno 5] Input/output error\n"
-    )
+    assert error.endswith(f"ruts-adapt: ошибка: не удалось прочитать текст.txt: {reason}\n")
 
 
 @pytest.mark.parametrize(
@@ -288,6 +296,7 @@ class Console(io.TextIOWrapper):
 
 def test_output_errors_replace(monkeypatch):
     """Справка печатается и на консоли без кириллицы: символы заменяются, а не роняют команду"""
+    monkeypatch.setenv("NO_COLOR", "1")
     buffer = io.BytesIO()
     stdout = Console(buffer, encoding="cp1252")
     monkeypatch.setattr(sys, "stdout", stdout)
@@ -308,4 +317,4 @@ def test_output_redirect_utf8(monkeypatch, models, stdin):
     models(*fakes())
     main(["-g", "2"])
     stdout.flush()
-    assert buffer.getvalue().decode("utf-8") == f"{SIMPLE}\n"
+    assert buffer.getvalue().decode("utf-8") == f"{SIMPLE}{os.linesep}"

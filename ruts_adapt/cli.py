@@ -20,7 +20,6 @@ INTERRUPTED = 130
 MAX_ATTEMPTS = 10
 FILE_ERRORS = (
     (FileNotFoundError, "файл не найден"),
-    (IsADirectoryError, "это каталог"),
     (PermissionError, "нет доступа"),
     (UnicodeDecodeError, "текст не в кодировке UTF-8"),
 )
@@ -221,8 +220,12 @@ def _read(file: str) -> str:
             return data.decode("utf-8")
         except UnicodeDecodeError:
             raise ValueError("текст в stdin не в кодировке UTF-8") from None
+    path = Path(file)
+    # Каталог на Windows не читается с PermissionError, а не IsADirectoryError
+    if path.is_dir():
+        raise ValueError(f"не удалось прочитать {file}: это каталог")
     try:
-        return Path(file).read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         reason = next((text for kind, text in FILE_ERRORS if isinstance(error, kind)), str(error))
         raise ValueError(f"не удалось прочитать {file}: {reason}") from None
