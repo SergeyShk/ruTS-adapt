@@ -2,7 +2,7 @@ import math
 from collections.abc import Mapping
 from typing import Any, TextIO
 
-from .attempts import MTLD_DROP, Attempt, Outcome, Result, candidate, mtld_drop
+from .attempts import MTLD_DROP, Attempt, Outcome, Result, mtld_drop
 from .measure import Direction, Measurement, Target
 from .tasks import FactCheck, FactStatus
 
@@ -103,30 +103,30 @@ class Reporter:
                 f"Возвращено с замечанием: {feedback}" if feedback else "Принято проверяющим"
             )
 
-    def pause(self, thread: str, tokens: int = 0) -> None:
+    def pause(self, thread: str, pause: Mapping[str, Any], tokens: int = 0) -> None:
         """
         Кандидат на итог ждет решения человека
 
         Аргументы:
             thread (str): Поток адаптации
-            tokens (int): Токены всех вызовов модели в этом запуске
+            pause (Mapping[str, Any]): Данные паузы графа: номер попытки и исход
+            tokens (int): Токены вызовов модели в этом запуске
         """
         assert self.source is not None
-        result = candidate(self.attempts)
-        chosen = result.attempt
-        assert chosen is not None
+        chosen = next(item for item in self.attempts if item.number == pause["attempt"])
         self._print("")
         self._print(table(self.source, self.attempts, chosen))
         self._print("")
         verdict = (
             "на уровне цели, все факты сохранены"
-            if result.outcome is Outcome.ACCEPTED
+            if pause["outcome"] is Outcome.ACCEPTED
             else "лучшая после лимита попыток: " + ", ".join(self._reasons(chosen))
         )
         self._print(f"Попытка {chosen.number} ждет решения - {verdict}. Черновик:")
         for line in chosen.text.splitlines():
             self._print(f"  {line}")
-        self._print(f"Токены всех вызовов модели: {tokens}")
+        self._print(f"Токены вызовов модели в этом запуске: {tokens}")
+        self._warn_mtld(chosen)
         self._print(f"Принять: ruts-adapt --thread {thread} --approve")
         self._print(f'Вернуть с замечанием: ruts-adapt --thread {thread} --reject "замечание"')
 
@@ -136,7 +136,7 @@ class Reporter:
 
         Аргументы:
             result (Result): Итог адаптации
-            tokens (int): Токены всех вызовов модели, включая повторы
+            tokens (int): Токены вызовов модели в этом запуске, включая повторы
         """
         if result.outcome is Outcome.ON_LEVEL:
             self._print("Текст уже на уровне цели, переписывать не нужно")
@@ -153,7 +153,12 @@ class Reporter:
                 f"Лимит попыток исчерпан, выбрана лучшая - попытка {chosen.number}: "
                 + ", ".join(self._reasons(chosen))
             )
-        self._print(f"Токены всех вызовов модели: {tokens}")
+        self._print(f"Токены вызовов модели в этом запуске: {tokens}")
+        self._warn_mtld(chosen)
+
+    def _warn_mtld(self, chosen: Attempt) -> None:
+        """Предупреждение о падении лексического разнообразия относительно исходника"""
+        assert self.source is not None
         drop = mtld_drop(self.source, chosen.measurement)
         if drop is not None and drop > MTLD_DROP:
             self._print(
@@ -194,7 +199,8 @@ def table(source: Measurement, attempts: list[Attempt], chosen: Attempt) -> str:
     """
     rows = [list(COLUMNS), ["исходный", *_metrics(source), "-", "-"]]
     for attempt in attempts:
-        mark = " *" if attempt is chosen else ""
+        # Сравнение по номеру: после продолжения потока попытки - разные копии из хранилища
+        mark = " *" if attempt.number == chosen.number else ""
         rows.append(
             [
                 f"{attempt.number}{mark}",

@@ -11,6 +11,8 @@ from .measure import Measurement, Target
 from .tasks import FactCheck, FactStatus
 
 STATE_TYPES = (Target, Measurement, FactCheck, FactStatus, Attempt, Outcome, Result)
+# Увеличивать при изменении полей State и классов из STATE_TYPES: старые потоки так не восстановить
+STATE_VERSION = 1
 DATABASE = "checkpoints.sqlite"
 
 
@@ -21,7 +23,9 @@ def serializer() -> JsonPlusSerializer:
     Описание:
         Восстанавливает из сохраненного состояния только типы ruTS-adapt
         из STATE_TYPES: тип не из списка LangGraph блокирует или восстанавливает
-        не тем классом, поэтому новый тип в состоянии нужно добавить сюда
+        не тем классом, поэтому новый тип в состоянии нужно добавить сюда. Объект,
+        класс которого с тех пор изменился, восстанавливается как None, поэтому
+        поток хранит STATE_VERSION, а продолжение сверяет ее
 
     Вывод:
         JsonPlusSerializer: Сериализатор со списком разрешенных типов

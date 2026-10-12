@@ -178,6 +178,30 @@ def test_review_best_candidate():
     assert f"<прошлая_попытка>\n{MEDIUM}\n</прошлая_попытка>" in writer.requests[2][1].content
 
 
+def test_review_remarks_kept():
+    """Замечание проверяющего остается в критике и следующих попыток, а не только первой"""
+    writer, judge = models(drafts=[SIMPLE, MEDIUM, SIMPLE + " Это все."], verdicts=[KEPT] * 3)
+    graph, context = saved(writer, judge, max_attempts=3)
+    graph.invoke(Command(resume={"feedback": "без терминов"}), CONFIG, context=context)
+    snapshot = graph.get_state(CONFIG)
+    assert snapshot.values["remarks"] == ["без терминов"]
+    assert snapshot.values["rejected"] == [1]
+    assert "Замечание проверяющего: без терминов" in writer.requests[1][1].content
+    assert "Замечание проверяющего: без терминов" in writer.requests[2][1].content
+    assert f"<прошлая_попытка>\n{MEDIUM}\n</прошлая_попытка>" in writer.requests[2][1].content
+    assert snapshot.interrupts[0].value["attempt"] == 3
+
+
+def test_review_rejected_not_candidate():
+    """Если попытка после возврата хуже, на решение уходит она, а не возвращенная"""
+    writer, judge = models(drafts=[SIMPLE, MEDIUM], verdicts=[KEPT, KEPT])
+    graph, context = saved(writer, judge, max_attempts=1)
+    graph.invoke(Command(resume={"feedback": "иначе"}), CONFIG, context=context)
+    assert graph.get_state(CONFIG).interrupts[0].value == {"attempt": 2, "outcome": Outcome.BEST}
+    state = graph.invoke(Command(resume={"feedback": None}), CONFIG, context=context)
+    assert (state["result"].attempt.number, state["result"].text) == (2, MEDIUM)
+
+
 def test_resume_after_error():
     """После ошибки модели поток продолжается с упавшего узла: факты не выписываются заново"""
     writer = FakeChatModel(replies=[anthropic(Draft(text=SIMPLE))])

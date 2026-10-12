@@ -295,7 +295,7 @@ def test_tokens_with_retries(capsys, models, stdin, monkeypatch):
     models(writer, judge)
     monkeypatch.setattr(cli, "build_graph", lambda **kwargs: build_graph(FAST, **kwargs))
     main(["-g", "2"])
-    assert "Токены всех вызовов модели: 660\n" in capsys.readouterr().err
+    assert "Токены вызовов модели в этом запуске: 660\n" in capsys.readouterr().err
 
 
 def test_interrupt_handler(models, stdin, monkeypatch):
@@ -395,7 +395,7 @@ def test_review_flow(capsys, models, stdin):
     output = capsys.readouterr()
     assert output.out == ""
     assert output.err.splitlines()[-3:] == [
-        "Токены всех вызовов модели: 495",
+        "Токены вызовов модели в этом запуске: 495",
         "Принять: ruts-adapt --thread demo --approve",
         'Вернуть с замечанием: ruts-adapt --thread demo --reject "замечание"',
     ]
@@ -495,6 +495,52 @@ def test_decision_not_waiting(capsys, models, stdin):
     fail(capsys, ["-g", "2", "-t", "broken"], code=1)
     error = fail(capsys, ["-t", "broken", "--reject", "короче"])
     assert error.endswith("ruts-adapt: ошибка: поток broken не ждет решения\n")
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (
+            ["-g", "2", "-t", "статья 1"],
+            "аргумент -t/--thread: имя потока - буквы, цифры, «-», «_» и «.», получено 'статья 1'",
+        ),
+        (["--approve"], "решение передается сохраненному потоку: нужен --thread"),
+    ],
+    ids=["space", "no-thread"],
+)
+def test_thread_argument_errors(capsys, argv, message):
+    assert fail(capsys, argv).endswith(f"ruts-adapt: ошибка: {message}\n")
+
+
+def test_no_database_on_errors(capsys, data_dir):
+    """Без --thread ошибки аргументов и текста ловятся до открытия хранилища"""
+    fail(capsys, [])
+    assert not data_dir.exists()
+
+
+@pytest.mark.parametrize("kind", ["file", "not-sqlite"])
+def test_storage_errors(capsys, stdin, data_dir, kind):
+    """Недоступное хранилище - понятная ошибка, а не трейсбек"""
+    if kind == "file":
+        data_dir.write_text("")
+    else:
+        data_dir.mkdir()
+        (data_dir / "checkpoints.sqlite").write_text("не база")
+    stdin(DECREE.encode())
+    error = fail(capsys, ["-g", "2"])
+    assert f"ruts-adapt: ошибка: не удалось открыть хранилище потоков в {data_dir}: " in error
+
+
+def test_old_version(capsys, models, stdin, monkeypatch):
+    """Поток, сохраненный другой версией формата, не продолжается: классы могли измениться"""
+    stdin(DECREE.encode())
+    models(*fakes())
+    main(["-g", "2", "-r", "-t", "old"])
+    monkeypatch.setattr(cli, "STATE_VERSION", 2)
+    error = fail(capsys, ["-t", "old", "--approve"])
+    assert error.endswith(
+        "ruts-adapt: ошибка: поток old сохранен другой версией ruts-adapt: начните новый поток\n"
+    )
 
 
 def test_data_dir_error(capsys, monkeypatch):

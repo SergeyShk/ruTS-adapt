@@ -3,9 +3,11 @@ import io
 import os
 import re
 import signal
+import sqlite3
 import sys
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import ExitStack
 from importlib.metadata import version
 from pathlib import Path
 from types import FrameType
@@ -18,7 +20,7 @@ from langgraph.types import Command, StateSnapshot
 
 from . import __version__
 from .attempts import Result
-from .checkpoint import checkpointer
+from .checkpoint import STATE_VERSION, checkpointer
 from .graph import Context, State, build_graph
 from .language import check_russian
 from .measure import MAX_GRADE, MIN_GRADE, Target
@@ -29,6 +31,7 @@ from .settings import Settings
 INTERRUPTED = 130
 MAX_ATTEMPTS = 10
 DEFAULT_ATTEMPTS = 3
+THREAD = re.compile(r"[\w.-]+")
 FILE_ERRORS = (
     (FileNotFoundError, "файл не найден"),
     (PermissionError, "нет доступа"),
@@ -153,6 +156,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.options.add_argument(
         "-t",
         "--thread",
+        type=_thread,
         metavar="ПОТОК",
         help="поток адаптации: новый с этим именем или продолжение сохраненного",
     )
@@ -182,15 +186,23 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
     """Новый поток или продолжение сохраненного, адаптация и печать итога"""
     if args.reject is not None and not args.reject.strip():
         parser.error("замечание --reject не должно быть пустым")
+    decided = args.approve or args.reject is not None
+    if args.thread is None and decided:
+        parser.error("решение передается сохраненному потоку: нужен --thread")
     try:
         settings = Settings.from_env()
     except ValueError as error:
         parser.error(str(error))
-    with checkpointer(settings.data_dir) as saver:
-        graph = build_graph(checkpointer=saver)
+    # Без --thread поток новый: аргументы и текст проверяются до открытия хранилища
+    started = _start(parser, args) if args.thread is None else None
+    with ExitStack() as stack:
         thread = args.thread or uuid.uuid4().hex[:8]
         config: RunnableConfig = {"configurable": {"thread_id": thread}}
-        snapshot = graph.get_state(config)
+        try:
+            graph = build_graph(checkpointer=stack.enter_context(checkpointer(settings.data_dir)))
+            snapshot = graph.get_state(config)
+        except (OSError, sqlite3.Error) as error:
+            parser.error(f"не удалось открыть хранилище потоков в {settings.data_dir}: {error}")
         graph_input: State | Command[Any] | None
         values: Mapping[str, Any]
         if snapshot.values:
@@ -201,7 +213,13 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
                 return
             values = snapshot.values
         else:
-            started = _start(parser, args, thread)
+            if decided:
+                parser.error(f"поток {thread} не найден")
+            started = started or _start(parser, args)
+            print(
+                f"Поток {thread}: продолжить после остановки - ruts-adapt --thread {thread}",
+                file=sys.stderr,
+            )
             graph_input, values = started, started
         try:
             context = Context(writer=chat_model(settings.writer), judge=chat_model(settings.judge))
@@ -219,10 +237,8 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
         print(result.text)
 
 
-def _start(parser: ArgumentParser, args: argparse.Namespace, thread: str) -> State:
+def _start(parser: ArgumentParser, args: argparse.Namespace) -> State:
     """Вход графа для нового потока"""
-    if args.approve or args.reject is not None:
-        parser.error(f"поток {thread} не найден")
     if args.grade is None:
         parser.error("нужен аргумент -g/--grade")
     try:
@@ -230,15 +246,12 @@ def _start(parser: ArgumentParser, args: argparse.Namespace, thread: str) -> Sta
         check_russian(text)
     except ValueError as error:
         parser.error(str(error))
-    print(
-        f"Поток {thread}: продолжить после остановки - ruts-adapt --thread {thread}",
-        file=sys.stderr,
-    )
     return {
         "source": text,
         "target": args.grade,
         "max_attempts": args.attempts or DEFAULT_ATTEMPTS,
         "review": args.review,
+        "version": STATE_VERSION,
     }
 
 
@@ -251,6 +264,8 @@ def _resume(
     Вывод:
         Command | None: Решение по кандидату или None - продолжение с места остановки
     """
+    if snapshot.values.get("version") != STATE_VERSION:
+        parser.error(f"поток {thread} сохранен другой версией ruts-adapt: начните новый поток")
     given = [
         name
         for name, value in (
@@ -305,7 +320,7 @@ def adapt(
         ModelError: Если ответ модели нельзя использовать и после повторов
     """
     result: Result | None = None
-    paused = False
+    pause: Mapping[str, Any] | None = None
     previous = signal.signal(signal.SIGINT, _interrupt)
     try:
         with get_usage_metadata_callback() as usage:
@@ -314,7 +329,7 @@ def adapt(
             ):
                 for node, values in update.items():
                     if node == "__interrupt__":
-                        paused = True
+                        pause = values[0].value
                         continue
                     reporter.update(node, values)
                     if node == "finish":
@@ -325,8 +340,8 @@ def adapt(
         item["input_tokens"] + item["output_tokens"] for item in usage.usage_metadata.values()
     )
     thread = config["configurable"]["thread_id"]
-    if paused:
-        reporter.pause(thread, tokens)
+    if pause is not None:
+        reporter.pause(thread, pause, tokens)
         return None
     assert result is not None
     reporter.finish(result, tokens)
@@ -348,6 +363,15 @@ def _target(raw: str) -> Target:
         raise argparse.ArgumentTypeError(
             f"нужен класс от {MIN_GRADE} до {MAX_GRADE}, получено {raw!r}"
         ) from None
+
+
+def _thread(raw: str) -> str:
+    """Имя потока по аргументу --thread: его можно скопировать в команду без кавычек"""
+    if not THREAD.fullmatch(raw):
+        raise argparse.ArgumentTypeError(
+            f"имя потока - буквы, цифры, «-», «_» и «.», получено {raw!r}"
+        )
+    return raw
 
 
 def _attempts(raw: str) -> int:

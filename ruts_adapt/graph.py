@@ -50,6 +50,9 @@ class State(TypedDict):
         critique (str): Критика попытки, по которой пишется следующая
         previous (str): Черновик этой попытки
         feedback (str | None): Замечание человека к кандидату на итог; None - принят
+        remarks (list[str]): Все замечания человека; узел добавляет к списку
+        rejected (list[int]): Номера попыток, которые вернул человек; узел добавляет к списку
+        version (int): Версия формата сохраненного состояния
         result (Result): Итог
     """
 
@@ -68,6 +71,9 @@ class State(TypedDict):
     critique: NotRequired[str]
     previous: NotRequired[str]
     feedback: NotRequired[str | None]
+    remarks: NotRequired[Annotated[list[str], operator.add]]
+    rejected: NotRequired[Annotated[list[int], operator.add]]
+    version: NotRequired[int]
     result: NotRequired[Result]
 
 
@@ -151,10 +157,13 @@ def review(state: State) -> dict[str, Any]:
         передает {"feedback": None}, чтобы принять, или {"feedback": "замечание"},
         чтобы переписать кандидата с этим замечанием, даже сверх лимита попыток
     """
-    result = candidate(state["attempts"])
+    result = candidate(state["attempts"], state.get("rejected"))
     assert result.attempt is not None
     decision = interrupt({"attempt": result.attempt.number, "outcome": result.outcome})
-    return {"feedback": decision["feedback"] or None}
+    feedback = decision["feedback"]
+    if not feedback:
+        return {"feedback": None}
+    return {"feedback": feedback, "remarks": [feedback], "rejected": [result.attempt.number]}
 
 
 def after_review(state: State) -> Literal["finish", "critique"]:
@@ -163,14 +172,22 @@ def after_review(state: State) -> Literal["finish", "critique"]:
 
 
 def criticize(state: State) -> dict[str, Any]:
-    """Критика без модели: последней попытки или кандидата, возвращенного человеком"""
-    feedback = state.get("feedback")
+    """
+    Критика без модели: последней попытки или кандидата, возвращенного человеком
+
+    Описание:
+        Замечания человека повторяются в каждой следующей критике, чтобы писатель
+        учитывал их и в попытках после той, что сразу за возвратом
+    """
     attempts = state["attempts"]
-    attempt = candidate(attempts).attempt if feedback else attempts[-1]
-    assert attempt is not None
+    if state.get("feedback"):
+        number = state["rejected"][-1]
+        attempt = next(attempt for attempt in attempts if attempt.number == number)
+    else:
+        attempt = attempts[-1]
     text = critique(attempt, state["source_measurement"], state["target"], state["facts"])
-    if feedback:
-        text += f"\nЗамечание проверяющего: {feedback}"
+    for remark in state.get("remarks", []):
+        text += f"\nЗамечание проверяющего: {remark}"
     return {"critique": text, "previous": attempt.text, "feedback": None}
 
 
@@ -179,7 +196,7 @@ def finish(state: State) -> dict[str, Any]:
     attempts = state.get("attempts", [])
     if not attempts:
         return {"result": Result(Outcome.ON_LEVEL, state["source"], None)}
-    return {"result": candidate(attempts)}
+    return {"result": candidate(attempts, state.get("rejected"))}
 
 
 def build_graph(

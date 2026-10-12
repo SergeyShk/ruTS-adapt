@@ -63,6 +63,14 @@ def test_candidate():
     assert candidate([lossless_far, lossy]) == Result(Outcome.BEST, SIMPLE, lossless_far)
 
 
+def test_candidate_skips_rejected():
+    """Возвращенная проверяющим попытка не становится кандидатом снова"""
+    accepted = attempt(1)
+    worse = attempt(2, text=MEDIUM)
+    assert candidate([accepted, worse], rejected=[1]) == Result(Outcome.BEST, MEDIUM, worse)
+    assert candidate([accepted, worse]).attempt is accepted
+
+
 def test_critique_too_complex():
     source = measure(DECREE)
     text = critique(attempt(text=MEDIUM, checks=KEPT.checks), source, TARGET, FACTS)
