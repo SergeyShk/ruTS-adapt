@@ -31,7 +31,8 @@ from .settings import Settings
 INTERRUPTED = 130
 MAX_ATTEMPTS = 10
 DEFAULT_ATTEMPTS = 3
-THREAD = re.compile(r"[\w.-]+")
+# С «-» в начале имя в подсказке читалось бы как параметр
+THREAD = re.compile(r"\w[\w.-]*")
 FILE_ERRORS = (
     (FileNotFoundError, "файл не найден"),
     (PermissionError, "нет доступа"),
@@ -233,6 +234,8 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
             result = adapt(graph, graph_input, config, context, reporter)
         except ModelError as error:
             _fail(f"ошибка модели: {error}. Продолжить: ruts-adapt --thread {thread}")
+        except sqlite3.Error as error:
+            _fail(f"не удалось сохранить поток в {settings.data_dir}: {error}")
     if result is not None:
         print(result.text)
 
@@ -369,7 +372,8 @@ def _thread(raw: str) -> str:
     """Имя потока по аргументу --thread: его можно скопировать в команду без кавычек"""
     if not THREAD.fullmatch(raw):
         raise argparse.ArgumentTypeError(
-            f"имя потока - буквы, цифры, «-», «_» и «.», получено {raw!r}"
+            f"имя потока - буквы, цифры, «-», «_» и «.», начиная с буквы или цифры, "
+            f"получено {raw!r}"
         )
     return raw
 

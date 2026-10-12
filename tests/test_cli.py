@@ -4,6 +4,7 @@ import os
 import re
 import runpy
 import signal
+import sqlite3
 import sys
 from importlib.metadata import version
 from types import SimpleNamespace
@@ -502,14 +503,16 @@ def test_decision_not_waiting(capsys, models, stdin):
     [
         (
             ["-g", "2", "-t", "статья 1"],
-            "аргумент -t/--thread: имя потока - буквы, цифры, «-», «_» и «.», получено 'статья 1'",
+            "аргумент -t/--thread: имя потока - буквы, цифры, «-», «_» и «.», начиная с буквы "
+            "или цифры, получено 'статья 1'",
         ),
+        (["-g", "2", "--thread=-x"], "аргумент -t/--thread: имя потока - буквы, цифры"),
         (["--approve"], "решение передается сохраненному потоку: нужен --thread"),
     ],
-    ids=["space", "no-thread"],
+    ids=["space", "dash", "no-thread"],
 )
 def test_thread_argument_errors(capsys, argv, message):
-    assert fail(capsys, argv).endswith(f"ruts-adapt: ошибка: {message}\n")
+    assert f"ruts-adapt: ошибка: {message}" in fail(capsys, argv)
 
 
 def test_no_database_on_errors(capsys, data_dir):
@@ -529,6 +532,21 @@ def test_storage_errors(capsys, stdin, data_dir, kind):
     stdin(DECREE.encode())
     error = fail(capsys, ["-g", "2"])
     assert f"ruts-adapt: ошибка: не удалось открыть хранилище потоков в {data_dir}: " in error
+
+
+def test_storage_write_error(capsys, models, stdin, monkeypatch, data_dir):
+    """База открылась, но запись падает (только чтение, диск, блокировка) - ошибка без трейсбека"""
+    stdin(DECREE.encode())
+    models(*fakes())
+
+    def readonly(*args):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    monkeypatch.setattr(cli, "adapt", readonly)
+    error = fail(capsys, ["-g", "2"], code=1)
+    assert error.endswith(
+        f"ruts-adapt: не удалось сохранить поток в {data_dir}: attempt to write a readonly database\n"
+    )
 
 
 def test_old_version(capsys, models, stdin, monkeypatch):
