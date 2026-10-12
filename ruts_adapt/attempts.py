@@ -95,6 +95,25 @@ def best(attempts: list[Attempt]) -> Attempt:
     )
 
 
+def candidate(attempts: list[Attempt]) -> Result:
+    """
+    Итог по попыткам
+
+    Описание:
+        Последняя попытка, если она принята, иначе лучшая из всех (best)
+
+    Аргументы:
+        attempts (list[Attempt]): Попытки, хотя бы одна
+
+    Вывод:
+        Result: Принятая или лучшая попытка
+    """
+    if attempts[-1].accepted:
+        return Result(Outcome.ACCEPTED, attempts[-1].text, attempts[-1])
+    chosen = best(attempts)
+    return Result(Outcome.BEST, chosen.text, chosen)
+
+
 def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[str]) -> str:
     """
     Критика попытки без модели

@@ -1,6 +1,7 @@
 import importlib
 import io
 import os
+import re
 import runpy
 import signal
 import sys
@@ -76,7 +77,10 @@ def test_help_russian(capsys):
         main(["--help"])
     assert info.value.code == 0
     output = capsys.readouterr().out
-    assert output.startswith("использование: ruts-adapt [-h] -g КЛАСС [-n N] [--version] [ФАЙЛ]")
+    assert output.startswith(
+        "использование: ruts-adapt [-h] -g КЛАСС [-n N] [-r] [-t ПОТОК] [ФАЙЛ]\n"
+        "       ruts-adapt -t ПОТОК [--approve | --reject ЗАМЕЧАНИЕ]"
+    )
     assert "\nаргументы:\n" in output
     assert "\nпараметры:\n" in output
     assert "RUTS_ADAPT_WRITER_MODEL" in output
@@ -92,7 +96,11 @@ def test_adapt_file(tmp_path, capsys, models):
     main(["--grade", "2", str(source)])
     output = capsys.readouterr()
     assert output.out == f"{SIMPLE}\n"
-    assert output.err.startswith("Исходный текст: «аспирантура (старше 22 лет)»")
+    first, second = output.err.splitlines()[:2]
+    assert re.fullmatch(
+        r"Поток ([0-9a-f]{8}): продолжить после остановки - ruts-adapt --thread \1", first
+    )
+    assert second.startswith("Исходный текст: «аспирантура (старше 22 лет)»")
     assert "Готово: попытка 1 на уровне цели, все факты сохранены" in output.err
 
 
@@ -118,7 +126,7 @@ def test_on_level(capsys, models, stdin):
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        ([], "нужны аргументы: -g/--grade"),
+        ([], "нужен аргумент -g/--grade"),
         (["-g"], "аргумент -g/--grade: нужно значение"),
         (["-g", "пятый"], "аргумент -g/--grade: нужен класс от 1 до 17, получено 'пятый'"),
         (["-g", "18"], "аргумент -g/--grade: нужен класс от 1 до 17, получено '18'"),
@@ -238,7 +246,7 @@ def test_model_create_error(capsys, monkeypatch, stdin):
 
     monkeypatch.setattr(cli, "chat_model", missing_key)
     error = fail(capsys, ["-g", "2"], code=1)
-    assert error == "ruts-adapt: не удалось создать модель: Missing credentials\n"
+    assert error.endswith("\nruts-adapt: не удалось создать модель: Missing credentials\n")
 
 
 @pytest.mark.parametrize(
@@ -260,8 +268,8 @@ def test_run_errors(capsys, models, stdin, failure, message):
     writer, judge = fakes()
     judge.replies[0] = failure
     models(writer, judge)
-    error = fail(capsys, ["-g", "2"], code=1)
-    assert error.endswith(f"ruts-adapt: {message}\n")
+    error = fail(capsys, ["-g", "2", "-t", "x"], code=1)
+    assert error.endswith(f"ruts-adapt: {message}. Продолжить: ruts-adapt --thread x\n")
     assert capsys.readouterr().out == ""
 
 
@@ -285,7 +293,7 @@ def test_tokens_with_retries(capsys, models, stdin, monkeypatch):
     writer = FakeChatModel(replies=[anthropic(Draft(text=SIMPLE))])
     judge = FakeChatModel(replies=[anthropic(Facts(facts=FACTS)), incomplete, anthropic(KEPT)])
     models(writer, judge)
-    monkeypatch.setattr(cli, "build_graph", lambda: build_graph(FAST))
+    monkeypatch.setattr(cli, "build_graph", lambda **kwargs: build_graph(FAST, **kwargs))
     main(["-g", "2"])
     assert "Токены всех вызовов модели: 660\n" in capsys.readouterr().err
 
@@ -318,7 +326,7 @@ def test_interrupted(capsys, models, stdin):
     writer, judge = fakes()
     judge.replies[0] = KeyboardInterrupt()
     models(writer, judge)
-    assert fail(capsys, ["-g", "2"], code=130).startswith("Исходный текст")
+    assert "Исходный текст" in fail(capsys, ["-g", "2"], code=130)
 
 
 def test_interrupted_reading(capsys, monkeypatch):
@@ -377,3 +385,127 @@ def test_output_redirect_utf8(monkeypatch, models, stdin):
     main(["-g", "2"])
     stdout.flush()
     assert buffer.getvalue().decode("utf-8") == f"{SIMPLE}{os.linesep}"
+
+
+def test_review_flow(capsys, models, stdin):
+    """--review: пауза перед итогом, затем решение по потоку и итог; завершенный поток - итог"""
+    stdin(DECREE.encode())
+    models(*fakes())
+    main(["-g", "2", "-r", "-t", "demo"])
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.splitlines()[-3:] == [
+        "Токены всех вызовов модели: 495",
+        "Принять: ruts-adapt --thread demo --approve",
+        'Вернуть с замечанием: ruts-adapt --thread demo --reject "замечание"',
+    ]
+    models(FakeChatModel(replies=[]), FakeChatModel(replies=[]))
+    main(["-t", "demo", "--approve"])
+    output = capsys.readouterr()
+    assert output.out == f"{SIMPLE}\n"
+    assert output.err.startswith("Продолжаем поток demo\nПринято проверяющим\n")
+    main(["-t", "demo"])
+    output = capsys.readouterr()
+    assert (output.out, output.err) == (f"{SIMPLE}\n", "Поток demo уже завершен\n")
+
+
+def test_review_reject(capsys, models, stdin):
+    stdin(DECREE.encode())
+    models(*fakes())
+    main(["-g", "2", "-r", "-t", "demo"])
+    capsys.readouterr()
+    writer = FakeChatModel(replies=[anthropic(Draft(text=SIMPLE + " Это все."))])
+    models(writer, FakeChatModel(replies=[anthropic(KEPT)]))
+    main(["-t", "demo", "--reject", "короче"])
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Возвращено с замечанием: короче" in output.err
+    assert "Попытка 2 ждет решения" in output.err
+    assert "Замечание проверяющего: короче" in writer.requests[0][1].content
+
+
+def test_resume_after_error(capsys, models, stdin):
+    """Ошибка модели подсказывает, как продолжить, и поток продолжается с места остановки"""
+    stdin(DECREE.encode())
+    writer, judge = fakes()
+    judge.replies[1] = anthropic(stop_reason="refusal", category="bio")
+    models(writer, judge)
+    error = fail(capsys, ["-g", "2", "-t", "x"], code=1)
+    assert error.endswith("Продолжить: ruts-adapt --thread x\n")
+    judge = FakeChatModel(replies=[anthropic(KEPT)])
+    models(FakeChatModel(replies=[]), judge)
+    main(["-t", "x"])
+    output = capsys.readouterr()
+    assert output.out == f"{SIMPLE}\n"
+    assert output.err.startswith("Продолжаем поток x\n")
+    assert len(judge.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["-t", "nope", "--approve"], "поток nope не найден"),
+        (["-t", "nope", "--reject", " "], "замечание --reject не должно быть пустым"),
+        (
+            ["-t", "nope", "--approve", "--reject", "x"],
+            "аргумент --reject: нельзя вместе с --approve",
+        ),
+    ],
+    ids=["unknown", "empty-reject", "both"],
+)
+def test_thread_errors(capsys, argv, message):
+    assert fail(capsys, argv).endswith(f"ruts-adapt: ошибка: {message}\n")
+
+
+@pytest.fixture
+def waiting(capsys, models, stdin):
+    """Поток demo, который ждет решения"""
+    stdin(DECREE.encode())
+    models(*fakes())
+    main(["-g", "2", "-r", "-t", "demo"])
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["-t", "demo"], "поток demo ждет решения: --approve или --reject ЗАМЕЧАНИЕ"),
+        (
+            ["-t", "demo", "-g", "5", "-n", "2", "-r", "текст.txt", "--approve"],
+            "поток demo уже есть, продолжение не принимает: ФАЙЛ, --grade, --attempts, --review",
+        ),
+    ],
+    ids=["no-decision", "arguments"],
+)
+def test_waiting_errors(waiting, capsys, argv, message):
+    assert fail(capsys, argv).endswith(f"ruts-adapt: ошибка: {message}\n")
+
+
+def test_decision_not_waiting(capsys, models, stdin):
+    """Решение передается только потоку, который его ждет"""
+    stdin(DECREE.encode())
+    models(*fakes())
+    main(["-g", "2", "-t", "done"])
+    error = fail(capsys, ["-t", "done", "--approve"])
+    assert error.endswith("ruts-adapt: ошибка: поток done уже завершен\n")
+    stdin(DECREE.encode())
+    writer, judge = fakes()
+    judge.replies[1] = anthropic(stop_reason="refusal")
+    models(writer, judge)
+    fail(capsys, ["-g", "2", "-t", "broken"], code=1)
+    error = fail(capsys, ["-t", "broken", "--reject", "короче"])
+    assert error.endswith("ruts-adapt: ошибка: поток broken не ждет решения\n")
+
+
+def test_data_dir_error(capsys, monkeypatch):
+    monkeypatch.setenv("RUTS_ADAPT_DATA_DIR", "data")
+    error = fail(capsys, ["-g", "2"])
+    assert "RUTS_ADAPT_DATA_DIR должна быть абсолютным путем, получено 'data'" in error
+
+
+def test_threads_saved(capsys, models, stdin, data_dir):
+    """Потоки хранятся в каталоге данных"""
+    stdin(DECREE.encode())
+    models(*fakes())
+    main(["-g", "2"])
+    assert (data_dir / "checkpoints.sqlite").is_file()

@@ -1,5 +1,6 @@
 import pytest
-from langgraph.types import RetryPolicy
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command, RetryPolicy
 
 from ruts_adapt.attempts import Outcome
 from ruts_adapt.graph import Context, _retryable, build_graph
@@ -120,3 +121,75 @@ def test_retryable():
     assert _retryable(ModelError("схема", retryable=True))
     assert not _retryable(ModelError("отказ"))
     assert not _retryable(ValueError("другое"))
+
+
+def saved(writer, judge, grade=2, max_attempts=3, review=True):
+    """Граф с чекпоинтером в памяти и первый запуск потока"""
+    graph = build_graph(FAST, checkpointer=InMemorySaver())
+    state = {
+        "source": DECREE,
+        "target": Target.from_grade(grade),
+        "max_attempts": max_attempts,
+        "review": review,
+    }
+    context = Context(writer=writer, judge=judge)
+    graph.invoke(state, CONFIG, context=context)
+    return graph, context
+
+
+CONFIG = {"configurable": {"thread_id": "t"}}
+
+
+def test_review_approve():
+    """С review принятая попытка ждет решения человека, а не становится итогом"""
+    writer, judge = models(drafts=[SIMPLE], verdicts=[KEPT])
+    graph, context = saved(writer, judge)
+    snapshot = graph.get_state(CONFIG)
+    assert snapshot.next == ("review",)
+    (pause,) = snapshot.interrupts
+    assert pause.value == {"attempt": 1, "outcome": Outcome.ACCEPTED}
+    assert "result" not in snapshot.values
+    state = graph.invoke(Command(resume={"feedback": None}), CONFIG, context=context)
+    assert (state["result"].outcome, state["result"].text) == (Outcome.ACCEPTED, SIMPLE)
+    assert graph.get_state(CONFIG).next == ()
+
+
+def test_review_reject():
+    """Возвращенный кандидат переписывается с замечанием, даже сверх лимита попыток"""
+    writer, judge = models(drafts=[SIMPLE, SIMPLE + " Это все."], verdicts=[KEPT, KEPT])
+    graph, context = saved(writer, judge, max_attempts=1)
+    graph.invoke(Command(resume={"feedback": "короче"}), CONFIG, context=context)
+    snapshot = graph.get_state(CONFIG)
+    assert snapshot.next == ("review",)
+    assert snapshot.interrupts[0].value["attempt"] == 2
+    assert snapshot.values["feedback"] is None
+    prompt = writer.requests[1][1].content
+    assert f"<прошлая_попытка>\n{SIMPLE}\n</прошлая_попытка>" in prompt
+    assert "Замечание проверяющего: короче\n</критика>" in prompt
+
+
+def test_review_best_candidate():
+    """После лимита на решение уходит лучшая попытка, и замечание относится к ней"""
+    lossy = verdict(FactStatus.KEPT, FactStatus.LOST)
+    writer, judge = models(drafts=[MEDIUM, SIMPLE, SIMPLE], verdicts=[KEPT, lossy, KEPT])
+    graph, context = saved(writer, judge, max_attempts=2)
+    assert graph.get_state(CONFIG).interrupts[0].value == {"attempt": 1, "outcome": Outcome.BEST}
+    graph.invoke(Command(resume={"feedback": "проще"}), CONFIG, context=context)
+    assert f"<прошлая_попытка>\n{MEDIUM}\n</прошлая_попытка>" in writer.requests[2][1].content
+
+
+def test_resume_after_error():
+    """После ошибки модели поток продолжается с упавшего узла: факты не выписываются заново"""
+    writer = FakeChatModel(replies=[anthropic(Draft(text=SIMPLE))])
+    judge = FakeChatModel(
+        replies=[anthropic(Facts(facts=FACTS)), anthropic(stop_reason="refusal")]
+    )
+    graph = build_graph(FAST, checkpointer=InMemorySaver())
+    state = {"source": DECREE, "target": Target.from_grade(2), "max_attempts": 3}
+    context = Context(writer=writer, judge=judge)
+    with pytest.raises(ModelError):
+        graph.invoke(state, CONFIG, context=context)
+    judge.replies.append(anthropic(KEPT))
+    result = graph.invoke(None, CONFIG, context=context)["result"]
+    assert result.outcome is Outcome.ACCEPTED
+    assert (len(writer.requests), len(judge.requests)) == (1, 3)

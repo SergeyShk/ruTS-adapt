@@ -1,7 +1,10 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from os import environ as os_environ
+from pathlib import Path
 from typing import Self
+
+from platformdirs import user_data_dir
 
 ENV_PREFIX = "RUTS_ADAPT_"
 # Уровни усилия, которые принимает модель чата LangChain каждого провайдера
@@ -14,6 +17,7 @@ EFFORTS = {
 SWITCHES = {"1": True, "0": False}
 DEFAULT_MODEL = "anthropic:claude-opus-5-5"
 DEFAULT_OLLAMA_CONTEXT = 32_768
+DEFAULT_DATA_DIR = Path(user_data_dir("ruts-adapt", appauthor=False))
 
 
 @dataclass(frozen=True)
@@ -70,15 +74,20 @@ class Settings:
         RUTS_ADAPT_<РОЛЬ>_CONTEXT, по умолчанию 32 768), резервная модель
         для обеих ролей - из RUTS_ADAPT_FALLBACKS (1 или 0); если переменная
         не задана, остается значение по умолчанию. Для модели не по умолчанию
-        усилие и лимит по умолчанию - умолчания провайдера, как и пустое усилие
+        усилие и лимит по умолчанию - умолчания провайдера, как и пустое усилие.
+        Каталог данных с сохраненными потоками адаптации задает RUTS_ADAPT_DATA_DIR,
+        без нее это каталог данных пользователя: ~/Library/Application Support/ruts-adapt
+        на macOS, ~/.local/share/ruts-adapt на Linux, %LOCALAPPDATA%\\ruts-adapt на Windows
 
     Атрибуты:
         writer (ModelSettings): Настройки писателя
         judge (ModelSettings): Настройки судьи
+        data_dir (Path): Каталог данных
     """
 
     writer: ModelSettings = field(default_factory=ModelSettings)
     judge: ModelSettings = field(default_factory=ModelSettings)
+    data_dir: Path = DEFAULT_DATA_DIR
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Self:
@@ -108,7 +117,21 @@ class Settings:
         return cls(
             writer=_model_settings(environ, "WRITER", fallbacks),
             judge=_model_settings(environ, "JUDGE", fallbacks),
+            data_dir=_data_dir(environ),
         )
+
+
+def _data_dir(environ: Mapping[str, str]) -> Path:
+    """Каталог данных из RUTS_ADAPT_DATA_DIR или каталог данных пользователя"""
+    variable = f"{ENV_PREFIX}DATA_DIR"
+    raw = environ.get(variable)
+    if not raw:
+        return DEFAULT_DATA_DIR
+    data_dir = Path(raw).expanduser()
+    # Относительный путь зависел бы от каталога, из которого запущена команда
+    if not data_dir.is_absolute():
+        raise ValueError(f"{variable} должна быть абсолютным путем, получено {raw!r}")
+    return data_dir.resolve()
 
 
 def _model_settings(environ: Mapping[str, str], role: str, fallbacks: bool) -> ModelSettings:
