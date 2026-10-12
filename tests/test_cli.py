@@ -525,7 +525,7 @@ def test_storage_errors(capsys, stdin, data_dir, kind):
         data_dir.write_text("")
     else:
         data_dir.mkdir()
-        (data_dir / "checkpoints.sqlite").write_text("не база")
+        (data_dir / "checkpoints.sqlite").write_bytes(b"not a database")
     stdin(DECREE.encode())
     error = fail(capsys, ["-g", "2"])
     assert f"ruts-adapt: ошибка: не удалось открыть хранилище потоков в {data_dir}: " in error
