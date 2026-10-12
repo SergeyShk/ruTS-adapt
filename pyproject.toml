@@ -36,7 +36,9 @@ classifiers = [
     "Typing :: Typed",
     "Natural Language :: Russian",
 ]
-dependencies = []
+dependencies = [
+    "ruts>=0.16,<0.17",
+]
 
 [project.scripts]
 ruts-adapt = "ruts_adapt.cli:main"

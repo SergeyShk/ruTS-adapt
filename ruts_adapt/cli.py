@@ -3,6 +3,7 @@ import io
 import re
 import sys
 from collections.abc import Iterable, Sequence
+from importlib.metadata import version
 from typing import Any, NoReturn
 
 from . import __version__
@@ -70,8 +71,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.options.add_argument(
         "--version",
         action="version",
-        version=f"ruts-adapt {__version__}",
-        help="показать версию и выйти",
+        version=f"ruts-adapt {__version__}, ruts {version('ruts')}",
+        help="показать версии ruts-adapt и ruts и выйти",
     )
     parser.parse_args(argv)
     parser.print_help()
