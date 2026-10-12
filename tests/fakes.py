@@ -88,11 +88,16 @@ def ollama(output: BaseModel | str = "", done_reason: str = "stop") -> AIMessage
     return AIMessage(content=_text(output), response_metadata=metadata, usage_metadata=USAGE)
 
 
+class RepliesExhaustedError(BaseException):
+    """Ответы поддельной модели кончились: ошибка теста, а не ответ модели, поэтому ask ее не ловит"""
+
+
 class FakeChatModel(BaseChatModel):
     """
     Поддельная модель чата: отдает заданные ответы по очереди и запоминает запросы
 
-    Ответ-исключение бросается, как бросил бы его SDK провайдера. Структурированный
+    Ответ-исключение бросается, как бросил бы его SDK провайдера, ответ-функция
+    вызывается в момент запроса. Структурированный
     вывод отдает сырой ответ, как with_structured_output(include_raw=True) моделей
     LangChain; разбор по схеме делает проверяемый код
     """
@@ -109,10 +114,13 @@ class FakeChatModel(BaseChatModel):
     def _generate(
         self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any
     ) -> ChatResult:
-        assert self.replies, "Поддельной модели не задан ответ на запрос"
+        if not self.replies:
+            raise RepliesExhaustedError("Поддельной модели не задан ответ на запрос")
         self.requests.append(messages)
         reply = self.replies.pop(0)
-        if isinstance(reply, Exception):
+        if callable(reply):
+            reply = reply()
+        if isinstance(reply, BaseException):
             raise reply
         return ChatResult(generations=[ChatGeneration(message=reply)])
 

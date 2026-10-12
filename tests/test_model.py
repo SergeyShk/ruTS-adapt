@@ -13,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ruts_adapt.model import FALLBACKS_BETA, ModelError, Reply, ask, chat_model
 from ruts_adapt.settings import ModelSettings
-from tests.fakes import FakeChatModel, anthropic, gemini, ollama, openai
+from tests.fakes import FakeChatModel, RepliesExhaustedError, anthropic, gemini, ollama, openai
 
 
 class Answer(BaseModel):
@@ -271,6 +271,7 @@ def test_refusal(reply, detail, name):
     with pytest.raises(ModelError) as info:
         ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
     assert str(info.value) == f"Модель {name} отказалась отвечать (причина: {detail})"
+    assert not info.value.retryable
 
 
 @pytest.mark.parametrize(
@@ -299,6 +300,7 @@ def test_truncated(reply, name):
     assert str(info.value) == (
         f"Ответ модели {name} обрезан по лимиту токенов: увеличьте MAX_TOKENS в настройках"
     )
+    assert not info.value.retryable
 
 
 @pytest.mark.parametrize(
@@ -314,8 +316,11 @@ def test_truncated(reply, name):
     ids=["anthropic", "openai", "gemini", "gemini-unspecified", "ollama", "unknown"],
 )
 def test_unexpected_stop(reply, detail):
-    with pytest.raises(ModelError, match=f"остановилась по неожиданной причине: {detail}$"):
+    with pytest.raises(
+        ModelError, match=f"остановилась по неожиданной причине: {detail}$"
+    ) as info:
         ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
+    assert info.value.retryable
 
 
 @pytest.mark.parametrize(
@@ -327,6 +332,23 @@ def test_schema_mismatch(reply):
     with pytest.raises(ModelError, match=r"^Ответ модели не соответствует схеме Answer$") as info:
         ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
     assert isinstance(info.value.__cause__, ValidationError)
+    assert info.value.retryable
+
+
+def test_ask_call_error():
+    """Ошибка вызова провайдера - ключ, лимиты, сеть - становится ошибкой модели без повтора"""
+    failure = ConnectionError("connection refused")
+    with pytest.raises(ModelError) as info:
+        ask(FakeChatModel(replies=[failure]), "", "Вопрос", Answer)
+    assert str(info.value) == "Модель fake не ответила: ConnectionError: connection refused"
+    assert info.value.__cause__ is failure
+    assert not info.value.retryable
+
+
+def test_fake_exhausted():
+    """Кончившиеся ответы поддельной модели роняют тест, а не превращаются в ошибку модели"""
+    with pytest.raises(RepliesExhaustedError):
+        ask(FakeChatModel(replies=[]), "", "Вопрос", Answer)
 
 
 def test_ask_no_usage():

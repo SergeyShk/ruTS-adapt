@@ -4,6 +4,7 @@ from enum import StrEnum
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
+from .language import check_russian
 from .measure import Direction, Measurement, Target
 from .model import ModelError, Reply, ask
 
@@ -96,7 +97,7 @@ def extract_facts(model: BaseChatModel, text: str) -> Reply[list[str]]:
     reply = ask(model, FACTS_SYSTEM, _tagged("текст", text), Facts)
     facts = [fact.strip() for fact in reply.output.facts if fact.strip()]
     if not facts:
-        raise ModelError("Модель не нашла в тексте ни одного факта")
+        raise ModelError("Модель не нашла в тексте ни одного факта", retryable=True)
     return reply.with_output(facts)
 
 
@@ -130,7 +131,7 @@ def rewrite(
 
     Исключения:
         ValueError: Если исходный текст уже на уровне цели
-        ModelError: Если ответ модели нельзя использовать или текст пуст
+        ModelError: Если ответ модели нельзя использовать, текст пуст или не на русском
     """
     direction = target.direction(measurement.grade)
     if direction is Direction.KEEP:
@@ -151,7 +152,11 @@ def rewrite(
     reply = ask(model, REWRITE_SYSTEM, "\n\n".join(parts), Draft)
     text = reply.output.text.strip()
     if not text:
-        raise ModelError("Модель вернула пустой текст")
+        raise ModelError("Модель вернула пустой текст", retryable=True)
+    try:
+        check_russian(text)
+    except ValueError as error:
+        raise ModelError(f"Черновик модели не подходит: {error}", retryable=True) from error
     return reply.with_output(text)
 
 
@@ -188,7 +193,9 @@ def judge(model: BaseChatModel, facts: list[str], draft: str) -> Reply[list[Fact
             )
             if numbers
         ]
-        raise ModelError(f"Судья оценил не каждый факт ровно один раз ({'; '.join(problems)})")
+        raise ModelError(
+            f"Судья оценил не каждый факт ровно один раз ({'; '.join(problems)})", retryable=True
+        )
     checks = sorted(reply.output.checks, key=lambda check: check.fact)
     return reply.with_output(checks)
 
