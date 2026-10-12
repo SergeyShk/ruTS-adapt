@@ -1,0 +1,22 @@
+name: Предложение
+description: Новый параметр команды, метрика или шаг адаптации
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу это решает
+      description: Какой текст и для какого читателя нужно адаптировать и почему текущей команды не хватает
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое решение
+      description: Как это могло бы выглядеть - параметр, метрика или шаг адаптации и пример результата
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Участие
+      options:
+        - label: Готов(а) сделать пул-реквест
