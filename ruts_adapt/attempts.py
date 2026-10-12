@@ -95,6 +95,29 @@ def best(attempts: list[Attempt]) -> Attempt:
     )
 
 
+def candidate(attempts: list[Attempt], rejected: list[int] | None = None) -> Result:
+    """
+    Итог по попыткам
+
+    Описание:
+        Последняя попытка, если она принята, иначе лучшая из всех (best);
+        попытки, которые вернул проверяющий, не выбираются
+
+    Аргументы:
+        attempts (list[Attempt]): Попытки, хотя бы одна не возвращенная
+        rejected (list[int]): Номера возвращенных попыток
+
+    Вывод:
+        Result: Принятая или лучшая попытка
+    """
+    rejected = rejected or []
+    remaining = [attempt for attempt in attempts if attempt.number not in rejected]
+    if remaining[-1].accepted:
+        return Result(Outcome.ACCEPTED, remaining[-1].text, remaining[-1])
+    chosen = best(remaining)
+    return Result(Outcome.BEST, chosen.text, chosen)
+
+
 def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[str]) -> str:
     """
     Критика попытки без модели

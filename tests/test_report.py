@@ -47,6 +47,54 @@ def test_updates():
     assert report.attempts == [first]
 
 
+def test_restore():
+    """Продолжение потока: номер следующей попытки - после записанных"""
+    report, out = reporter()
+    first = attempt(1, MEDIUM)
+    report.restore({"source_measurement": SOURCE, "attempts": [first]})
+    assert (report.source, report.attempts) == (SOURCE, [first])
+    report.update("measure", {"draft_measurement": measure(SIMPLE)})
+    report.update("review", {"feedback": None})
+    report.update("review", {"feedback": "короче"})
+    assert out.getvalue().splitlines() == [
+        "Попытка 2: «1-3-й класс (6-8 лет)», сводный класс 1.0",
+        "Принято проверяющим",
+        "Возвращено с замечанием: короче",
+    ]
+
+
+def test_restore_new():
+    report, _ = reporter()
+    report.restore({"source": DECREE})
+    assert (report.source, report.attempts) == (None, [])
+
+
+def test_pause_accepted():
+    report, out = reporter()
+    chosen = attempt(1, SIMPLE)
+    report.restore({"source_measurement": SOURCE, "attempts": [chosen]})
+    report.pause("abc", {"attempt": 1, "outcome": Outcome.ACCEPTED}, tokens=495)
+    assert out.getvalue().splitlines()[-5:] == [
+        "Попытка 1 ждет решения - на уровне цели, все факты сохранены. Черновик:",
+        f"  {SIMPLE}",
+        "Токены вызовов модели в этом запуске: 495",
+        "Принять: ruts-adapt --thread abc --approve",
+        'Вернуть с замечанием: ruts-adapt --thread abc --reject "замечание"',
+    ]
+
+
+def test_pause_best():
+    report, out = reporter()
+    chosen = attempt(1, MEDIUM, verdict(FactStatus.KEPT, FactStatus.LOST).checks)
+    report.restore({"source_measurement": SOURCE, "attempts": [chosen]})
+    report.pause("abc", {"attempt": 1, "outcome": Outcome.BEST})
+    assert (
+        "Попытка 1 ждет решения - лучшая после лимита попыток: уровень «аспирантура "
+        "(старше 22 лет)» вместо «1-3-й класс (6-8 лет)», искажено или потеряно фактов: 1. "
+        "Черновик:"
+    ) in out.getvalue()
+
+
 def test_direction():
     report, out = reporter()
     report.target = Target.from_grade(17)
@@ -76,7 +124,7 @@ def test_accepted():
     assert lines[1].startswith("Попытка   Класс  Ступень")
     assert lines[-2:] == [
         "Готово: попытка 1 на уровне цели, все факты сохранены",
-        "Токены всех вызовов модели: 495",
+        "Токены вызовов модели в этом запуске: 495",
     ]
 
 
@@ -123,6 +171,24 @@ def test_mtld_warning():
         assert last.startswith("Предупреждение: лексическое разнообразие (MTLD) упало на 75%") is (
             warned
         )
+
+
+def test_pause_mtld_warning():
+    """Падение разнообразия видно до решения, а не только после принятия"""
+    long_source = measure("Кот спит на окне, а пес лежит у двери. " * 20)
+    text = "Кот спит. Кот спит. " * 50
+    chosen = Attempt(1, text, measure(text), KEPT.checks, 0.0, 330)
+    report, out = reporter()
+    report.restore({"source_measurement": replace(long_source, mtld=40.0), "attempts": [chosen]})
+    report.pause("abc", {"attempt": 1, "outcome": Outcome.ACCEPTED})
+    assert "Предупреждение: лексическое разнообразие (MTLD) упало на 75%" in out.getvalue()
+
+
+def test_table_mark_by_number():
+    """После продолжения потока выбранная попытка - копия из хранилища, звездочка ставится по номеру"""
+    first = attempt(1, SIMPLE)
+    rows = table(SOURCE, [first], replace(first)).splitlines()
+    assert rows[-1].startswith("1 *")
 
 
 def test_table():

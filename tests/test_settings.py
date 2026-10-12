@@ -1,6 +1,9 @@
-import pytest
+from pathlib import Path
 
-from ruts_adapt.settings import EFFORTS, ModelSettings, Settings
+import pytest
+from platformdirs import user_data_dir
+
+from ruts_adapt.settings import DEFAULT_DATA_DIR, EFFORTS, ModelSettings, Settings
 
 
 def test_defaults():
@@ -129,3 +132,16 @@ def test_invalid(environ, message):
     with pytest.raises(ValueError) as info:
         Settings.from_env(environ)
     assert str(info.value).startswith(message)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("~/ruts-adapt", Path.home().resolve() / "ruts-adapt"), ("", DEFAULT_DATA_DIR)],
+)
+def test_data_dir(value, expected):
+    """Каталог данных задает RUTS_ADAPT_DATA_DIR, пустая - не задает"""
+    assert Settings.from_env({"RUTS_ADAPT_DATA_DIR": value}).data_dir == expected
+
+
+def test_data_dir_default():
+    assert Settings.from_env({}).data_dir == Path(user_data_dir("ruts-adapt", appauthor=False))

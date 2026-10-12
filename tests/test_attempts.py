@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from ruts_adapt.attempts import Attempt, best, critique, mtld_drop
+from ruts_adapt.attempts import Attempt, Outcome, Result, best, candidate, critique, mtld_drop
 from ruts_adapt.measure import Target, measure
 from ruts_adapt.tasks import FactCheck, FactStatus
 from tests.samples import DECREE, FACTS, KEPT, MEDIUM, SIMPLE, verdict
@@ -52,6 +52,23 @@ def test_best():
     assert best([lossless_far, lossy_close, lossless_near]) is lossless_near
     assert best([lossless_near_late, lossless_near]) is lossless_near
     assert best([lossy_close]) is lossy_close
+
+
+def test_candidate():
+    """Итог - последняя попытка, если принята, иначе лучшая"""
+    lossless_far = attempt(1, gap=5.0)
+    accepted = attempt(2)
+    assert candidate([lossless_far, accepted]) == Result(Outcome.ACCEPTED, SIMPLE, accepted)
+    lossy = attempt(2, checks=verdict(FactStatus.KEPT, FactStatus.LOST).checks)
+    assert candidate([lossless_far, lossy]) == Result(Outcome.BEST, SIMPLE, lossless_far)
+
+
+def test_candidate_skips_rejected():
+    """Возвращенная проверяющим попытка не становится кандидатом снова"""
+    accepted = attempt(1)
+    worse = attempt(2, text=MEDIUM)
+    assert candidate([accepted, worse], rejected=[1]) == Result(Outcome.BEST, MEDIUM, worse)
+    assert candidate([accepted, worse]).attempt is accepted
 
 
 def test_critique_too_complex():

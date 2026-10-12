@@ -1,4 +1,5 @@
 import math
+from collections.abc import Mapping
 from typing import Any, TextIO
 
 from .attempts import MTLD_DROP, Attempt, Outcome, Result, mtld_drop
@@ -49,7 +50,16 @@ class Reporter:
         self.out = out
         self.source: Measurement | None = None
         self.attempts: list[Attempt] = []
-        self._number = 0
+
+    def restore(self, values: Mapping[str, Any]) -> None:
+        """
+        Ход работы из сохраненного состояния потока
+
+        Аргументы:
+            values (Mapping[str, Any]): Состояние графа
+        """
+        self.source = values.get("source_measurement")
+        self.attempts = list(values.get("attempts", []))
 
     def update(self, node: str, values: dict[str, Any]) -> None:
         """
@@ -69,17 +79,16 @@ class Reporter:
         elif node == "extract_facts":
             self._print(f"Фактов в исходном тексте: {len(values['facts'])}")
         elif node == "rewrite":
-            self._number += 1
-            self._print(f"Попытка {self._number}: черновик готов")
+            self._print(f"Попытка {self._current}: черновик готов")
         elif node == "measure":
             current = values["draft_measurement"]
             self._print(
-                f"Попытка {self._number}: «{current.level}», сводный класс {current.grade:.1f}"
+                f"Попытка {self._current}: «{current.level}», сводный класс {current.grade:.1f}"
             )
         elif node == "judge":
             kept, distorted, lost = _counts(values["checks"])
             self._print(
-                f"Попытка {self._number}: факты - сохранено {kept}, искажено {distorted}, "
+                f"Попытка {self._current}: факты - сохранено {kept}, искажено {distorted}, "
                 f"потеряно {lost}"
             )
         elif node == "record":
@@ -88,6 +97,38 @@ class Reporter:
             self._print("Критика:")
             for line in values["critique"].splitlines():
                 self._print(f"  {line}")
+        elif node == "review":
+            feedback = values["feedback"]
+            self._print(
+                f"Возвращено с замечанием: {feedback}" if feedback else "Принято проверяющим"
+            )
+
+    def pause(self, thread: str, pause: Mapping[str, Any], tokens: int = 0) -> None:
+        """
+        Кандидат на итог ждет решения человека
+
+        Аргументы:
+            thread (str): Поток адаптации
+            pause (Mapping[str, Any]): Данные паузы графа: номер попытки и исход
+            tokens (int): Токены вызовов модели в этом запуске
+        """
+        assert self.source is not None
+        chosen = next(item for item in self.attempts if item.number == pause["attempt"])
+        self._print("")
+        self._print(table(self.source, self.attempts, chosen))
+        self._print("")
+        verdict = (
+            "на уровне цели, все факты сохранены"
+            if pause["outcome"] is Outcome.ACCEPTED
+            else "лучшая после лимита попыток: " + ", ".join(self._reasons(chosen))
+        )
+        self._print(f"Попытка {chosen.number} ждет решения - {verdict}. Черновик:")
+        for line in chosen.text.splitlines():
+            self._print(f"  {line}")
+        self._print(f"Токены вызовов модели в этом запуске: {tokens}")
+        self._warn_mtld(chosen)
+        self._print(f"Принять: ruts-adapt --thread {thread} --approve")
+        self._print(f'Вернуть с замечанием: ruts-adapt --thread {thread} --reject "замечание"')
 
     def finish(self, result: Result, tokens: int = 0) -> None:
         """
@@ -95,7 +136,7 @@ class Reporter:
 
         Аргументы:
             result (Result): Итог адаптации
-            tokens (int): Токены всех вызовов модели, включая повторы
+            tokens (int): Токены вызовов модели в этом запуске, включая повторы
         """
         if result.outcome is Outcome.ON_LEVEL:
             self._print("Текст уже на уровне цели, переписывать не нужно")
@@ -108,25 +149,37 @@ class Reporter:
         if result.outcome is Outcome.ACCEPTED:
             self._print(f"Готово: попытка {chosen.number} на уровне цели, все факты сохранены")
         else:
-            problems = len(chosen.lost) + len(chosen.distorted)
-            reasons = []
-            if chosen.gap != 0:
-                reasons.append(
-                    f"уровень «{chosen.measurement.level}» вместо «{self.target.level}»"
-                )
-            if problems:
-                reasons.append(f"искажено или потеряно фактов: {problems}")
             self._print(
                 f"Лимит попыток исчерпан, выбрана лучшая - попытка {chosen.number}: "
-                + ", ".join(reasons)
+                + ", ".join(self._reasons(chosen))
             )
-        self._print(f"Токены всех вызовов модели: {tokens}")
+        self._print(f"Токены вызовов модели в этом запуске: {tokens}")
+        self._warn_mtld(chosen)
+
+    def _warn_mtld(self, chosen: Attempt) -> None:
+        """Предупреждение о падении лексического разнообразия относительно исходника"""
+        assert self.source is not None
         drop = mtld_drop(self.source, chosen.measurement)
         if drop is not None and drop > MTLD_DROP:
             self._print(
                 f"Предупреждение: лексическое разнообразие (MTLD) упало на {drop:.0%} - "
                 "текст мог стать однообразным"
             )
+
+    @property
+    def _current(self) -> int:
+        """Номер попытки, которая пишется: попытка записывается после измерения и проверки"""
+        return len(self.attempts) + 1
+
+    def _reasons(self, chosen: Attempt) -> list[str]:
+        """Почему попытка не принята"""
+        problems = len(chosen.lost) + len(chosen.distorted)
+        reasons = []
+        if chosen.gap != 0:
+            reasons.append(f"уровень «{chosen.measurement.level}» вместо «{self.target.level}»")
+        if problems:
+            reasons.append(f"искажено или потеряно фактов: {problems}")
+        return reasons
 
     def _print(self, line: str) -> None:
         print(line, file=self.out, flush=True)
@@ -146,7 +199,8 @@ def table(source: Measurement, attempts: list[Attempt], chosen: Attempt) -> str:
     """
     rows = [list(COLUMNS), ["исходный", *_metrics(source), "-", "-"]]
     for attempt in attempts:
-        mark = " *" if attempt is chosen else ""
+        # Сравнение по номеру: после продолжения потока попытки - разные копии из хранилища
+        mark = " *" if attempt.number == chosen.number else ""
         rows.append(
             [
                 f"{attempt.number}{mark}",
