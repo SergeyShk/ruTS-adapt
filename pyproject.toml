@@ -37,6 +37,8 @@ classifiers = [
     "Natural Language :: Russian",
 ]
 dependencies = [
+    "anthropic>=1.13,<2",
+    "pydantic>=2",
     "ruts>=0.16,<0.17",
 ]
 
