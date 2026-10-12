@@ -229,19 +229,20 @@ def _parse(raw: AIMessage, schema: type[SchemaT]) -> SchemaT:
     Разбор текста ответа по схеме
 
     Описание:
-        Обычно ответ - один текстовый блок. После отказа Claude посреди ответа
-        резервная модель продолжает частичный текст (ответ - все блоки) или
-        начинает заново (ответ - последние блоки), поэтому разбирается весь
-        текст, а затем его окончания по блокам
+        Обычно ответ - один JSON-объект. После отказа Claude посреди ответа
+        резервная модель продолжает частичный текст (ответ - весь текст) или
+        начинает заново (ответ - окончание текста с одной из открывающих скобок),
+        и LangChain может склеить оба текста в одну строку, поэтому разбирается
+        весь текст, а затем его окончания с каждой открывающей скобки
     """
     if isinstance(raw.content, str):
-        texts = [raw.content]
+        text = raw.content
     else:
-        texts = [_block_text(block) for block in raw.content]
-        texts = [text for text in texts if text] or [""]
-    for start in range(len(texts)):
+        text = "".join(_block_text(block) for block in raw.content)
+    starts = [0] + [i for i, char in enumerate(text) if char == "{" and i > 0]
+    for start in starts:
         try:
-            return schema.model_validate_json("".join(texts[start:]))
+            return schema.model_validate_json(text[start:])
         except ValidationError as error:
             last_error = error
     raise ModelError(f"Ответ модели не соответствует схеме {schema.__name__}") from last_error

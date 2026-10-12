@@ -176,6 +176,13 @@ def test_ask_responses_api_error(body, message):
     assert info.value.__cause__ is failure
 
 
+def test_ask_fallback_merged():
+    """Без мышления LangChain склеивает частичный текст и новый ответ резервной модели в строку"""
+    reply = anthropic(ANSWER)
+    reply.content = '{"words": ["ко{"words": ["кот", "спит"]}'
+    assert ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer).output == ANSWER
+
+
 def test_ask_string_blocks():
     """Блоки содержимого LangChain бывают и строками"""
     reply = anthropic(ANSWER)
