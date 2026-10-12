@@ -88,7 +88,7 @@ def ollama(output: BaseModel | str = "", done_reason: str = "stop") -> AIMessage
     return AIMessage(content=_text(output), response_metadata=metadata, usage_metadata=USAGE)
 
 
-class RepliesExhausted(BaseException):
+class RepliesExhaustedError(BaseException):
     """Ответы поддельной модели кончились: ошибка теста, а не ответ модели, поэтому ask ее не ловит"""
 
 
