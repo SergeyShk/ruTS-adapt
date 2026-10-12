@@ -26,11 +26,22 @@ U = TypeVar("U")
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 Stop = Literal["done", "refused", "truncated", "other"]
 _REFUSED = "Модель {name} отказалась отвечать (причина: {detail})"
+_MISMATCH = "Ответ модели не соответствует схеме {schema}"
 _TRUNCATED = "Ответ модели {name} обрезан по лимиту токенов: увеличьте MAX_TOKENS в настройках"
 
 
 class ModelError(Exception):
-    """Ответ модели, который нельзя использовать: отказ, обрезанный или не по схеме"""
+    """
+    Ответ модели, который нельзя использовать: отказ, обрезанный или не по схеме
+
+    Атрибуты:
+        retryable (bool): Повтор того же запроса может помочь - ответ не по схеме
+            или неожиданная остановка; отказ и обрезка повторятся снова
+    """
+
+    def __init__(self, message: str, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -161,7 +172,7 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
             raise ModelError(_TRUNCATED.format(name=name)) from error
         if reason == "content_filter":
             raise ModelError(_REFUSED.format(name=name, detail=reason)) from error
-        raise ModelError(f"Ответ модели не соответствует схеме {schema.__name__}") from error
+        raise ModelError(_MISMATCH.format(schema=schema.__name__), retryable=True) from error
     raw: AIMessage = cast(dict[str, Any], result)["raw"]
     name = raw.response_metadata.get("model_name") or name
     stop, detail = _stop(raw)
@@ -170,7 +181,9 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
     if stop == "truncated":
         raise ModelError(_TRUNCATED.format(name=name))
     if stop == "other":
-        raise ModelError(f"Модель {name} остановилась по неожиданной причине: {detail}")
+        raise ModelError(
+            f"Модель {name} остановилась по неожиданной причине: {detail}", retryable=True
+        )
     usage = raw.usage_metadata or {"input_tokens": 0, "output_tokens": 0}
     return Reply(_parse(raw, schema), name, usage["input_tokens"], usage["output_tokens"])
 
@@ -276,7 +289,7 @@ def _parse(raw: AIMessage, schema: type[SchemaT]) -> SchemaT:
             return schema.model_validate_json(text[start:])
         except ValidationError as error:
             last_error = error
-    raise ModelError(f"Ответ модели не соответствует схеме {schema.__name__}") from last_error
+    raise ModelError(_MISMATCH.format(schema=schema.__name__), retryable=True) from last_error
 
 
 def _block_text(block: str | dict[Any, Any]) -> str:

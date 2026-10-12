@@ -55,8 +55,9 @@ def test_extract_facts():
 
 
 def test_extract_no_facts():
-    with pytest.raises(ModelError, match=r"^Модель не нашла в тексте ни одного факта$"):
+    with pytest.raises(ModelError, match=r"^Модель не нашла в тексте ни одного факта$") as info:
         extract_facts(fake(Facts(facts=[" "])), "...")
+    assert info.value.retryable
 
 
 def test_rewrite():
@@ -113,8 +114,9 @@ def test_rewrite_on_level():
 
 
 def test_rewrite_empty():
-    with pytest.raises(ModelError, match=r"^Модель вернула пустой текст$"):
+    with pytest.raises(ModelError, match=r"^Модель вернула пустой текст$") as info:
         rewrite(fake(Draft(text=" \n")), SOURCE, measure(SOURCE), Target.from_grade(5), FACTS)
+    assert info.value.retryable
 
 
 def test_judge():
@@ -156,3 +158,4 @@ def test_judge_incomplete(statuses, problems):
     with pytest.raises(ModelError) as info:
         judge(fake(Verdict(checks=checks(*statuses))), FACTS, "Черновик")
     assert str(info.value) == f"Судья оценил не каждый факт ровно один раз ({problems})"
+    assert info.value.retryable

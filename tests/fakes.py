@@ -112,7 +112,7 @@ class FakeChatModel(BaseChatModel):
         assert self.replies, "Поддельной модели не задан ответ на запрос"
         self.requests.append(messages)
         reply = self.replies.pop(0)
-        if isinstance(reply, Exception):
+        if isinstance(reply, BaseException):
             raise reply
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
