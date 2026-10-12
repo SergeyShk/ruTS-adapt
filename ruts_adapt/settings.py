@@ -4,11 +4,12 @@ from os import environ as os_environ
 from typing import Self
 
 ENV_PREFIX = "RUTS_ADAPT_"
-# Уровни усилия, которые принимает модель чата LangChain каждого провайдера (reasoning_effort)
+# Уровни усилия, которые принимает модель чата LangChain каждого провайдера
 EFFORTS = {
     "anthropic": ("low", "medium", "high", "xhigh", "max"),
     "openai": ("none", "minimal", "low", "medium", "high", "xhigh"),
     "google_genai": ("minimal", "low", "medium", "high"),
+    "ollama": ("none", "low", "medium", "high"),
 }
 SWITCHES = {"1": True, "0": False}
 DEFAULT_MODEL = "anthropic:claude-opus-5-5"
@@ -21,8 +22,9 @@ class ModelSettings:
 
     Описание:
         Модель задается как провайдер:модель, как в init_chat_model LangChain;
-        провайдеры - anthropic, openai, google_genai (Gemini). Усилие - уровень
-        рассуждения модели, у каждого провайдера свой набор. В max_tokens входит
+        провайдеры - anthropic, openai, google_genai (Gemini) и ollama (локальные
+        открытые модели, ollama:qwen3:30b). Усилие - уровень рассуждения модели,
+        у каждого провайдера свой набор; у ollama none выключает рассуждение. В max_tokens входит
         и мышление модели, а не только ответ. None - умолчание провайдера:
         усилие high и лимит 64 000 подобраны для модели по умолчанию
 

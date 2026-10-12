@@ -65,7 +65,9 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         запрос, который может идти дольше 10 минут, а большой max_tokens
         считается таким. Усилие и лимит сверяются с профилем модели LangChain,
         если он их знает. Ключ API модель берет из переменной окружения
-        провайдера: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
+        провайдера: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY; Ollama
+        ключа не требует, адрес ее сервера - OLLAMA_HOST, по умолчанию
+        localhost:11434
 
     Аргументы:
         settings (ModelSettings): Провайдер, модель, усилие, max_tokens и резервная модель
@@ -77,10 +79,16 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         ValueError: Если модель не поддерживает усилие или max_tokens больше ее предела
     """
     options: dict[str, Any] = {}
-    if settings.max_tokens is not None:
-        options["max_tokens"] = settings.max_tokens
-    if settings.effort is not None:
-        options["reasoning_effort"] = settings.effort
+    if settings.provider == "ollama":
+        if settings.max_tokens is not None:
+            options["num_predict"] = settings.max_tokens
+        if settings.effort is not None:
+            options["reasoning"] = False if settings.effort == "none" else settings.effort
+    else:
+        if settings.max_tokens is not None:
+            options["max_tokens"] = settings.max_tokens
+        if settings.effort is not None:
+            options["reasoning_effort"] = settings.effort
     if settings.provider == "anthropic":
         options["streaming"] = True
         if settings.fallbacks:
@@ -169,6 +177,8 @@ def _stop(raw: AIMessage) -> tuple[Stop, str | None]:
     # Заблокированный запрос Gemini приходит без имени провайдера, только с prompt_feedback
     if provider == "google_genai" or "prompt_feedback" in metadata:
         return _gemini_stop(metadata)
+    if provider == "ollama":
+        return _ollama_stop(metadata)
     return "other", f"неизвестный провайдер {provider}"
 
 
@@ -224,6 +234,16 @@ def _gemini_stop(metadata: dict[str, Any]) -> tuple[Stop, str | None]:
     return "other", reason
 
 
+def _ollama_stop(metadata: dict[str, Any]) -> tuple[Stop, str | None]:
+    """Итог ответа локальной модели Ollama по done_reason; отказов у нее нет"""
+    reason = metadata.get("done_reason")
+    if reason == "stop":
+        return "done", reason
+    if reason == "length":
+        return "truncated", reason
+    return "other", reason
+
+
 def _parse(raw: AIMessage, schema: type[SchemaT]) -> SchemaT:
     """
     Разбор текста ответа по схеме
@@ -232,8 +252,10 @@ def _parse(raw: AIMessage, schema: type[SchemaT]) -> SchemaT:
         Обычно ответ - один JSON-объект. После отказа Claude посреди ответа
         резервная модель продолжает частичный текст (ответ - весь текст) или
         начинает заново (ответ - окончание текста с одной из открывающих скобок),
-        и LangChain может склеить оба текста в одну строку, поэтому разбирается
-        весь текст, а затем его окончания с каждой открывающей скобки
+        и LangChain может склеить оба текста в одну строку; локальная модель
+        с рассуждением по умолчанию пишет его перед ответом в тегах think.
+        Поэтому разбирается весь текст, а затем его окончания с каждой
+        открывающей скобки
     """
     if isinstance(raw.content, str):
         text = raw.content

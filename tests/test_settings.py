@@ -31,6 +31,13 @@ def test_default_model_tuning():
     assert other.writer == ModelSettings("anthropic:claude-haiku-4-5", None, None)
 
 
+def test_ollama_model():
+    """Имя локальной модели само содержит двоеточие: провайдер - до первого"""
+    settings = Settings.from_env({"RUTS_ADAPT_WRITER_MODEL": "ollama:qwen3:30b"})
+    assert (settings.writer.provider, settings.writer.name) == ("ollama", "qwen3:30b")
+    assert (settings.writer.effort, settings.writer.max_tokens) == (None, None)
+
+
 def test_effort_default():
     """Пустое усилие - умолчание провайдера, для моделей без рассуждения"""
     settings = Settings.from_env(
@@ -66,7 +73,7 @@ def test_from_os_environ(monkeypatch):
         (
             {"RUTS_ADAPT_WRITER_MODEL": "claude-opus-5-5"},
             "RUTS_ADAPT_WRITER_MODEL должна иметь вид провайдер:модель с провайдером "
-            "anthropic, openai, google_genai, получено 'claude-opus-5-5'",
+            "anthropic, openai, google_genai, ollama, получено 'claude-opus-5-5'",
         ),
         (
             {"RUTS_ADAPT_JUDGE_MODEL": "gemini:gemini-2.5-pro"},

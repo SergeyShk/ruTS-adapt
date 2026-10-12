@@ -76,6 +76,18 @@ def gemini(
     return AIMessage(content=_text(output), response_metadata=metadata, usage_metadata=USAGE)
 
 
+def ollama(output: BaseModel | str = "", done_reason: str = "stop") -> AIMessage:
+    """Ответ локальной модели, как его собирает ChatOllama из потока"""
+    metadata = {
+        "model": "qwen3:30b",
+        "model_name": "qwen3:30b",
+        "model_provider": "ollama",
+        "done": True,
+        "done_reason": done_reason,
+    }
+    return AIMessage(content=_text(output), response_metadata=metadata, usage_metadata=USAGE)
+
+
 class FakeChatModel(BaseChatModel):
     """
     Поддельная модель чата: отдает заданные ответы по очереди и запоминает запросы

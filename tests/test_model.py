@@ -5,6 +5,7 @@ from google.genai.types import BlockedReason
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from openai import ContentFilterFinishReasonError, LengthFinishReasonError
 from openai.types.chat import ChatCompletion
@@ -12,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ruts_adapt.model import FALLBACKS_BETA, ModelError, Reply, ask, chat_model
 from ruts_adapt.settings import ModelSettings
-from tests.fakes import FakeChatModel, anthropic, gemini, openai
+from tests.fakes import FakeChatModel, anthropic, gemini, ollama, openai
 
 
 class Answer(BaseModel):
@@ -111,14 +112,30 @@ def test_chat_model_gemini(keys):
 
 
 @pytest.mark.parametrize(
+    ("effort", "max_tokens", "reasoning"),
+    [("high", 8000, "high"), ("none", 8000, False), (None, None, None)],
+)
+def test_chat_model_ollama(effort, max_tokens, reasoning):
+    """Локальной модели ключ не нужен; лимит - num_predict, none выключает рассуждение"""
+    model = chat_model(ModelSettings("ollama:qwen3:30b", effort, max_tokens))
+    assert isinstance(model, ChatOllama)
+    assert (model.model, model.num_predict, model.reasoning) == (
+        "qwen3:30b",
+        max_tokens,
+        reasoning,
+    )
+
+
+@pytest.mark.parametrize(
     ("reply", "name"),
     [
         (anthropic(ANSWER), "claude-opus-5-5"),
         (openai(ANSWER), "gpt-5-2025-08-07"),
         (openai(ANSWER, finish_reason=None, status="completed"), "gpt-5-2025-08-07"),
         (gemini(ANSWER), "gemini-2.5-pro"),
+        (ollama(ANSWER), "qwen3:30b"),
     ],
-    ids=["anthropic", "openai", "openai-responses", "gemini"],
+    ids=["anthropic", "openai", "openai-responses", "gemini", "ollama"],
 )
 def test_ask(reply, name):
     model = FakeChatModel(replies=[reply])
@@ -180,6 +197,12 @@ def test_ask_fallback_merged():
     """Без мышления LangChain склеивает частичный текст и новый ответ резервной модели в строку"""
     reply = anthropic(ANSWER)
     reply.content = '{"words": ["ко{"words": ["кот", "спит"]}'
+    assert ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer).output == ANSWER
+
+
+def test_ask_think_tags():
+    """Локальная модель с рассуждением по умолчанию пишет его перед ответом в тегах think"""
+    reply = ollama('<think>Нужен объект {"words": [...]}</think>' + ANSWER.model_dump_json())
     assert ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer).output == ANSWER
 
 
@@ -258,8 +281,9 @@ def test_refusal(reply, detail, name):
         ),
         (gemini('{"words": ["ко', finish_reason="MAX_TOKENS"), "gemini-2.5-pro"),
         (LengthFinishReasonError(completion=ChatCompletion.model_construct(usage=None)), "fake"),
+        (ollama('{"words": ["ко', done_reason="length"), "qwen3:30b"),
     ],
-    ids=["anthropic", "openai", "openai-responses", "gemini", "openai-sdk"],
+    ids=["anthropic", "openai", "openai-responses", "gemini", "openai-sdk", "ollama"],
 )
 def test_truncated(reply, name):
     """Обрезанный JSON не разбирается: ошибка называет лимит, а не схему"""
@@ -277,9 +301,10 @@ def test_truncated(reply, name):
         (openai(ANSWER, finish_reason="tool_calls"), "tool_calls"),
         (gemini(ANSWER, finish_reason="OTHER"), "OTHER"),
         (gemini(blocked="BLOCKED_REASON_UNSPECIFIED"), "None"),
+        (ollama(ANSWER, done_reason="load"), "load"),
         (AIMessage(content=ANSWER.model_dump_json()), "неизвестный провайдер None"),
     ],
-    ids=["anthropic", "openai", "gemini", "gemini-unspecified", "unknown"],
+    ids=["anthropic", "openai", "gemini", "gemini-unspecified", "ollama", "unknown"],
 )
 def test_unexpected_stop(reply, detail):
     with pytest.raises(ModelError, match=f"остановилась по неожиданной причине: {detail}$"):
