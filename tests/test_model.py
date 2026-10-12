@@ -1,10 +1,16 @@
 import pytest
-from anthropic import transform_schema
+from google.genai.types import BlockedReason
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+from openai import ContentFilterFinishReasonError, LengthFinishReasonError
+from openai.types.chat import ChatCompletion
 from pydantic import BaseModel, ValidationError
 
-from ruts_adapt.model import FALLBACKS_BETA, ModelError, Reply, ask
+from ruts_adapt.model import FALLBACKS_BETA, ModelError, Reply, ask, chat_model
 from ruts_adapt.settings import ModelSettings
-from tests.fakes import FakeClient, message
+from tests.fakes import FakeChatModel, anthropic, gemini, openai
 
 
 class Answer(BaseModel):
@@ -14,115 +20,212 @@ class Answer(BaseModel):
 ANSWER = Answer(words=["кот", "спит"])
 
 
-def test_ask():
-    client = FakeClient(message(ANSWER))
-    reply = ask(client, ModelSettings(), "Системный промпт", "Вопрос", Answer)
-    assert reply == Reply(ANSWER, "claude-opus-5-5", 120, 45)
-    (request,) = client.requests
-    assert request == {
-        "model": "claude-opus-5-5",
-        "max_tokens": 64_000,
-        "system": "Системный промпт",
-        "messages": [{"role": "user", "content": "Вопрос"}],
-        "output_config": {
-            "effort": "high",
-            "format": {"type": "json_schema", "schema": transform_schema(Answer)},
-        },
-        "fallbacks": "default",
-        "betas": [FALLBACKS_BETA],
-    }
+@pytest.fixture
+def keys(monkeypatch):
+    """Ключи-заглушки: модели LangChain требуют ключ при создании, запросов тесты не шлют"""
+    for variable in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setenv(variable, "test")
 
 
-def test_ask_settings():
-    """Модель, усилие и лимит берутся из настроек; без резервной модели нет и беты"""
-    client = FakeClient(message(ANSWER, model="claude-sonnet-5-5"))
-    settings = ModelSettings("claude-sonnet-5-5", "low", 1000, fallbacks=False)
-    reply = ask(client, settings, "", "Вопрос", Answer)
-    assert reply.model == "claude-sonnet-5-5"
-    (request,) = client.requests
-    assert (request["model"], request["max_tokens"]) == ("claude-sonnet-5-5", 1000)
-    assert request["output_config"]["effort"] == "low"
-    assert "fallbacks" not in request
-    assert "betas" not in request
+def test_chat_model_anthropic(keys):
+    model = chat_model(ModelSettings())
+    assert isinstance(model, ChatAnthropic)
+    assert (model.model, model.max_tokens, model.reasoning_effort) == (
+        "claude-opus-5-5",
+        64_000,
+        "high",
+    )
+    assert model.streaming is True
+    assert model.betas == [FALLBACKS_BETA]
+    assert model.model_kwargs == {"fallbacks": "default"}
 
 
-@pytest.mark.parametrize("partial", [None, '{"words": ["ко'])
-def test_ask_fallback_model(partial):
-    """Ответ резервной модели разбирается без частичного текста основной, видно, кто отвечал"""
-    client = FakeClient(message(ANSWER, model="claude-opus-5", partial=partial))
-    reply = ask(client, ModelSettings(), "", "Вопрос", Answer)
-    assert reply == Reply(ANSWER, "claude-opus-5", 120, 45)
+def test_chat_model_anthropic_options(keys):
+    """Без резервной модели нет ни беты, ни параметра; пустое усилие - умолчание провайдера"""
+    settings = ModelSettings("anthropic:claude-sonnet-5-5", None, 16_000, fallbacks=False)
+    model = chat_model(settings)
+    assert (model.model, model.max_tokens, model.reasoning_effort) == (
+        "claude-sonnet-5-5",
+        16_000,
+        None,
+    )
+    assert model.betas is None
+    assert model.model_kwargs == {}
 
 
-def test_ask_fallback_continuation():
-    """Если резервная модель продолжила частичный текст основной, разбирается их сумма"""
-    client = FakeClient(message('кот", "спит"]}', model="claude-opus-5", partial='{"words": ["'))
-    assert ask(client, ModelSettings(), "", "Вопрос", Answer).output == ANSWER
+def test_chat_model_openai(keys):
+    """Резервная модель - только у Claude, поток не нужен"""
+    model = chat_model(ModelSettings("openai:gpt-5", "medium"))
+    assert isinstance(model, ChatOpenAI)
+    assert (model.model_name, model.max_tokens, model.reasoning_effort) == (
+        "gpt-5",
+        64_000,
+        "medium",
+    )
+    assert model.streaming is False
+    assert model.model_kwargs == {}
 
 
-def test_ask_tokens_by_attempts():
-    """Верхний usage считает только ответившую модель, токены отказавшей берутся из iterations"""
-    iterations = [
-        {
-            "type": "message",
-            "model": "claude-opus-5-5",
-            "input_tokens": 1000,
-            "output_tokens": 800,
-        },
-        {"type": "compaction", "input_tokens": 5, "output_tokens": 5},
-        {
-            "type": "fallback_message",
-            "model": "claude-opus-5",
-            "input_tokens": 1000,
-            "output_tokens": 300,
-        },
-    ]
-    client = FakeClient(message(ANSWER, model="claude-opus-5", iterations=iterations))
-    reply = ask(client, ModelSettings(), "", "Вопрос", Answer)
-    assert (reply.input_tokens, reply.output_tokens) == (2000, 1100)
-
-
-def test_fake_client_checks_request():
-    """Поддельный клиент не пропускает запрос, который отверг бы настоящий SDK"""
-    stream = FakeClient(message(ANSWER)).beta.messages.stream
-    with (
-        pytest.raises(TypeError, match="fallback"),
-        stream(model="m", max_tokens=1, messages=[], fallback="default"),
-    ):
-        pass
+def test_chat_model_gemini(keys):
+    model = chat_model(ModelSettings("google_genai:gemini-2.5-pro", "low", 8000))
+    assert isinstance(model, ChatGoogleGenerativeAI)
+    assert (model.model, model.max_output_tokens, model.reasoning_effort) == (
+        "gemini-2.5-pro",
+        8000,
+        "low",
+    )
+    assert not model.streaming
 
 
 @pytest.mark.parametrize(
-    ("category", "text"),
-    [("bio", "категория отказа: bio"), (None, "категория отказа: не указана")],
+    ("reply", "name"),
+    [
+        (anthropic(ANSWER), "claude-opus-5-5"),
+        (openai(ANSWER), "gpt-5-2025-08-07"),
+        (openai(ANSWER, finish_reason=None, status="completed"), "gpt-5-2025-08-07"),
+        (gemini(ANSWER), "gemini-2.5-pro"),
+    ],
+    ids=["anthropic", "openai", "openai-responses", "gemini"],
 )
-def test_refusal(category, text):
-    client = FakeClient(message("", stop_reason="refusal", category=category))
-    with pytest.raises(
-        ModelError, match=f"^Модель claude-opus-5-5 отказалась отвечать \\({text}\\)$"
-    ):
-        ask(client, ModelSettings(), "", "Вопрос", Answer)
+def test_ask(reply, name):
+    model = FakeChatModel(replies=[reply])
+    assert ask(model, "Системный промпт", "Вопрос", Answer) == Reply(ANSWER, name, 120, 45)
+    assert model.requests == [[SystemMessage("Системный промпт"), HumanMessage("Вопрос")]]
+    assert model.schemas == [Answer]
 
 
-def test_max_tokens():
+@pytest.mark.parametrize(
+    ("partial", "text"),
+    [('{"words": ["ко', ANSWER.model_dump_json()), ('{"words": ["', 'кот", "спит"]}')],
+    ids=["restart", "continue"],
+)
+def test_ask_fallback(partial, text):
+    """После отказа Claude резервная модель начинает заново или продолжает частичный текст"""
+    reply = anthropic(text, model="claude-opus-5", partial=partial)
+    result = ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
+    assert result == Reply(ANSWER, "claude-opus-5", 120, 45)
+
+
+def test_ask_string_blocks():
+    """Блоки содержимого LangChain бывают и строками"""
+    reply = anthropic(ANSWER)
+    reply.content = ['{"words": ["кот", ', '"спит"]}']
+    assert ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer).output == ANSWER
+
+
+@pytest.mark.parametrize(
+    ("reply", "detail", "name"),
+    [
+        (anthropic(stop_reason="refusal", category="bio"), "bio", "claude-opus-5-5"),
+        (anthropic(stop_reason="refusal"), "не указана", "claude-opus-5-5"),
+        (openai(refusal="I can't help with that."), "I can't help with that.", "gpt-5-2025-08-07"),
+        (openai(finish_reason="content_filter"), "content_filter", "gpt-5-2025-08-07"),
+        (
+            openai(
+                finish_reason=None,
+                status="incomplete",
+                incomplete_details={"reason": "content_filter"},
+            ),
+            "content_filter",
+            "gpt-5-2025-08-07",
+        ),
+        (
+            AIMessage(
+                content=[{"type": "refusal", "refusal": "Нет"}],
+                response_metadata={
+                    "model_provider": "openai",
+                    "model_name": "gpt-5",
+                    "status": "completed",
+                },
+            ),
+            "Нет",
+            "gpt-5",
+        ),
+        (gemini(finish_reason="SAFETY"), "SAFETY", "gemini-2.5-pro"),
+        (gemini(blocked=BlockedReason.SAFETY), "SAFETY", "fake"),
+        (gemini(blocked="PROHIBITED_CONTENT"), "PROHIBITED_CONTENT", "fake"),
+        (ContentFilterFinishReasonError(), "content_filter", "fake"),
+    ],
+    ids=[
+        "anthropic",
+        "anthropic-no-category",
+        "openai",
+        "openai-filter",
+        "openai-responses-filter",
+        "openai-responses-refusal",
+        "gemini",
+        "gemini-blocked",
+        "gemini-blocked-string",
+        "openai-sdk-filter",
+    ],
+)
+def test_refusal(reply, detail, name):
+    """Отказ - ошибка с причиной; имя модели без метаданных берется из ее настроек"""
+    with pytest.raises(ModelError) as info:
+        ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
+    assert str(info.value) == f"Модель {name} отказалась отвечать (причина: {detail})"
+
+
+@pytest.mark.parametrize(
+    ("reply", "name"),
+    [
+        (anthropic('{"words": ["ко', stop_reason="max_tokens"), "claude-opus-5-5"),
+        (openai('{"words": ["ко', finish_reason="length"), "gpt-5-2025-08-07"),
+        (
+            openai(
+                finish_reason=None,
+                status="incomplete",
+                incomplete_details={"reason": "max_output_tokens"},
+            ),
+            "gpt-5-2025-08-07",
+        ),
+        (gemini('{"words": ["ко', finish_reason="MAX_TOKENS"), "gemini-2.5-pro"),
+        (LengthFinishReasonError(completion=ChatCompletion.model_construct(usage=None)), "fake"),
+    ],
+    ids=["anthropic", "openai", "openai-responses", "gemini", "openai-sdk"],
+)
+def test_truncated(reply, name):
     """Обрезанный JSON не разбирается: ошибка называет лимит, а не схему"""
-    client = FakeClient(message('{"words": ["кот", "сп', stop_reason="max_tokens"))
-    with pytest.raises(ModelError, match=r"^Ответ модели обрезан на max_tokens=500: увеличьте"):
-        ask(client, ModelSettings(max_tokens=500), "", "Вопрос", Answer)
+    with pytest.raises(ModelError) as info:
+        ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
+    assert str(info.value) == (
+        f"Ответ модели {name} обрезан по лимиту токенов: увеличьте MAX_TOKENS в настройках"
+    )
 
 
-def test_unexpected_stop():
-    client = FakeClient(message(ANSWER, stop_reason="pause_turn"))
-    with pytest.raises(ModelError, match=r"неожиданной причине: pause_turn$"):
-        ask(client, ModelSettings(), "", "Вопрос", Answer)
+@pytest.mark.parametrize(
+    ("reply", "detail"),
+    [
+        (anthropic(ANSWER, stop_reason="pause_turn"), "pause_turn"),
+        (openai(ANSWER, finish_reason="tool_calls"), "tool_calls"),
+        (gemini(ANSWER, finish_reason="OTHER"), "OTHER"),
+        (gemini(blocked="BLOCKED_REASON_UNSPECIFIED"), "None"),
+        (AIMessage(content=ANSWER.model_dump_json()), "неизвестный провайдер None"),
+    ],
+    ids=["anthropic", "openai", "gemini", "gemini-unspecified", "unknown"],
+)
+def test_unexpected_stop(reply, detail):
+    with pytest.raises(ModelError, match=f"остановилась по неожиданной причине: {detail}$"):
+        ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
 
 
-@pytest.mark.parametrize("text", ['{"words": "кот"}', "кот спит", ""])
-def test_schema_mismatch(text):
-    client = FakeClient(message(text))
+@pytest.mark.parametrize(
+    "reply",
+    [anthropic('{"words": "кот"}'), openai("кот спит"), gemini(""), anthropic("{}", partial="{")],
+    ids=["wrong-type", "not-json", "empty", "blocks"],
+)
+def test_schema_mismatch(reply):
     with pytest.raises(ModelError, match=r"^Ответ модели не соответствует схеме Answer$") as info:
-        ask(client, ModelSettings(), "", "Вопрос", Answer)
+        ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
     assert isinstance(info.value.__cause__, ValidationError)
+
+
+def test_ask_no_usage():
+    """Провайдер не сообщил токены - в ответе нули"""
+    reply = gemini(ANSWER)
+    reply.usage_metadata = None
+    reply = ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
+    assert (reply.input_tokens, reply.output_tokens) == (0, 0)
 
 
 def test_with_output():

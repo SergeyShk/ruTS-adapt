@@ -1,12 +1,11 @@
 from collections import Counter
 from enum import StrEnum
 
-from anthropic import Anthropic
+from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
 from .measure import Direction, Measurement, Target
 from .model import ModelError, Reply, ask
-from .settings import ModelSettings
 
 FACTS_SYSTEM = """\
 Ты выписываешь факты из текста, чтобы потом проверить, сохранил ли их пересказ этого текста.
@@ -80,13 +79,12 @@ class Verdict(BaseModel):
     checks: list[FactCheck]
 
 
-def extract_facts(client: Anthropic, settings: ModelSettings, text: str) -> Reply[list[str]]:
+def extract_facts(model: BaseChatModel, text: str) -> Reply[list[str]]:
     """
     Извлечение фактов исходного текста
 
     Аргументы:
-        client (Anthropic): Клиент API
-        settings (ModelSettings): Настройки судьи
+        model (BaseChatModel): Модель судьи
         text (str): Исходный текст
 
     Вывод:
@@ -95,7 +93,7 @@ def extract_facts(client: Anthropic, settings: ModelSettings, text: str) -> Repl
     Исключения:
         ModelError: Если ответ модели нельзя использовать или в нем нет фактов
     """
-    reply = ask(client, settings, FACTS_SYSTEM, _tagged("текст", text), Facts)
+    reply = ask(model, FACTS_SYSTEM, _tagged("текст", text), Facts)
     facts = [fact.strip() for fact in reply.output.facts if fact.strip()]
     if not facts:
         raise ModelError("Модель не нашла в тексте ни одного факта")
@@ -103,8 +101,7 @@ def extract_facts(client: Anthropic, settings: ModelSettings, text: str) -> Repl
 
 
 def rewrite(
-    client: Anthropic,
-    settings: ModelSettings,
+    model: BaseChatModel,
     source: str,
     measurement: Measurement,
     target: Target,
@@ -120,8 +117,7 @@ def rewrite(
         прошлый черновик и критика к нему подсказывают, что исправить
 
     Аргументы:
-        client (Anthropic): Клиент API
-        settings (ModelSettings): Настройки писателя
+        model (BaseChatModel): Модель писателя
         source (str): Исходный текст
         measurement (Measurement): Уровень и признаки исходного текста
         target (Target): Цель адаптации
@@ -152,22 +148,19 @@ def rewrite(
         parts.append(_tagged("прошлая_попытка", previous))
     if critique is not None:
         parts.append(_tagged("критика", critique))
-    reply = ask(client, settings, REWRITE_SYSTEM, "\n\n".join(parts), Draft)
+    reply = ask(model, REWRITE_SYSTEM, "\n\n".join(parts), Draft)
     text = reply.output.text.strip()
     if not text:
         raise ModelError("Модель вернула пустой текст")
     return reply.with_output(text)
 
 
-def judge(
-    client: Anthropic, settings: ModelSettings, facts: list[str], draft: str
-) -> Reply[list[FactCheck]]:
+def judge(model: BaseChatModel, facts: list[str], draft: str) -> Reply[list[FactCheck]]:
     """
     Проверка фактов исходного текста в черновике
 
     Аргументы:
-        client (Anthropic): Клиент API
-        settings (ModelSettings): Настройки судьи
+        model (BaseChatModel): Модель судьи
         facts (list[str]): Факты исходного текста
         draft (str): Черновик
 
@@ -179,7 +172,7 @@ def judge(
             не каждый факт ровно один раз
     """
     prompt = "\n\n".join([_tagged("факты", _numbered(facts)), _tagged("пересказ", draft)])
-    reply = ask(client, settings, JUDGE_SYSTEM, prompt, Verdict)
+    reply = ask(model, JUDGE_SYSTEM, prompt, Verdict)
     counts = Counter(check.fact for check in reply.output.checks)
     expected = range(1, len(facts) + 1)
     missing = [number for number in expected if number not in counts]

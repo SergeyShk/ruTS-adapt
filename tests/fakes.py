@@ -1,77 +1,120 @@
-import inspect
-from collections.abc import Iterator
-from contextlib import contextmanager
-from types import SimpleNamespace
 from typing import Any
 
-from anthropic import omit
-from anthropic.resources.beta.messages import Messages
-from anthropic.types.beta import BetaMessage
-from pydantic import BaseModel
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable, RunnableLambda
+from pydantic import BaseModel, Field
 
-STREAM = inspect.signature(Messages.stream)
+USAGE = {"input_tokens": 120, "output_tokens": 45, "total_tokens": 165}
 
 
-def message(
-    output: BaseModel | str,
+def _text(output: BaseModel | str) -> str:
+    return output if isinstance(output, str) else output.model_dump_json()
+
+
+def anthropic(
+    output: BaseModel | str = "",
     stop_reason: str = "end_turn",
-    model: str = "claude-opus-5-5",
     category: str | None = None,
+    model: str = "claude-opus-5-5",
     partial: str | None = None,
-    iterations: list[dict[str, Any]] | None = None,
-) -> BetaMessage:
+) -> AIMessage:
     """
-    Ответ API: пустой блок мышления, как при скрытом мышлении, и текст с JSON
+    Ответ Claude, как его собирает ChatAnthropic из потока: блок мышления и текст
 
     С partial ответ повторяет отказ основной модели посреди потока: ее частичный
-    текст, блок fallback и ответ резервной модели model; iterations - токены
-    отдельных попыток, как их отдает API при резервной модели
+    текст и ответ резервной модели отдельными блоками (блок fallback LangChain
+    из потока выбрасывает)
     """
-    text = output if isinstance(output, str) else output.model_dump_json()
-    refusal = {"type": "refusal", "category": category, "explanation": None}
-    content: list[dict[str, Any]] = [{"type": "thinking", "thinking": "", "signature": "test"}]
+    content: list[str | dict[str, Any]] = [{"type": "thinking", "thinking": "", "index": 0}]
     if partial is not None:
-        content += [
-            {"type": "text", "text": partial},
-            {
-                "type": "fallback",
-                "from": {"model": "claude-opus-5-5"},
-                "to": {"model": model},
-                "trigger": {"type": "refusal", "category": "cyber"},
-            },
-        ]
-    content.append({"type": "text", "text": text})
-    if iterations is not None:
-        cache = {"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
-        iterations = [cache | iteration for iteration in iterations]
-    return BetaMessage.model_validate(
-        {
-            "id": "msg_test",
-            "type": "message",
-            "role": "assistant",
-            "model": model,
-            "content": content,
-            "stop_reason": stop_reason,
-            "stop_details": refusal if stop_reason == "refusal" else None,
-            "stop_sequence": None,
-            "usage": {"input_tokens": 120, "output_tokens": 45, "iterations": iterations},
-        }
+        content.append({"type": "text", "text": partial, "index": 1})
+    content.append({"type": "text", "text": _text(output), "index": 3})
+    metadata: dict[str, Any] = {
+        "model_name": model,
+        "model_provider": "anthropic",
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+    }
+    if stop_reason == "refusal":
+        metadata["stop_details"] = {"type": "refusal", "category": category, "explanation": None}
+    return AIMessage(content=content, response_metadata=metadata, usage_metadata=USAGE)
+
+
+def openai(
+    output: BaseModel | str = "",
+    finish_reason: str | None = "stop",
+    refusal: str | None = None,
+    **metadata: Any,
+) -> AIMessage:
+    """Ответ OpenAI, как его собирает ChatOpenAI; metadata - поля Responses API"""
+    return AIMessage(
+        content=_text(output),
+        additional_kwargs={"refusal": refusal},
+        response_metadata={
+            "model_name": "gpt-5-2025-08-07",
+            "model_provider": "openai",
+            "finish_reason": finish_reason,
+            **metadata,
+        },
+        usage_metadata=USAGE,
     )
 
 
-class FakeClient:
-    """Поддельный клиент API: отдает заданные ответы по очереди и запоминает запросы"""
+def gemini(
+    output: BaseModel | str = "", finish_reason: str = "STOP", blocked: Any = None
+) -> AIMessage:
+    """Ответ Gemini, как его собирает ChatGoogleGenerativeAI; заблокированный - без кандидатов"""
+    if blocked is not None:
+        feedback = {"block_reason": blocked, "block_reason_message": None, "safety_ratings": None}
+        return AIMessage(content="", response_metadata={"prompt_feedback": feedback})
+    metadata = {
+        "finish_reason": finish_reason,
+        "model_name": "gemini-2.5-pro",
+        "model_provider": "google_genai",
+    }
+    return AIMessage(content=_text(output), response_metadata=metadata, usage_metadata=USAGE)
 
-    def __init__(self, *replies: BetaMessage) -> None:
-        self.replies = list(replies)
-        self.requests: list[dict[str, Any]] = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(stream=self._stream))
 
-    @contextmanager
-    def _stream(self, **request: Any) -> Iterator[SimpleNamespace]:
-        assert self.replies, "Поддельному клиенту не задан ответ на запрос"
-        # Запрос, который не примет настоящий SDK, падает здесь с той же TypeError
-        STREAM.bind(None, **request)
-        self.requests.append({key: value for key, value in request.items() if value is not omit})
+class FakeChatModel(BaseChatModel):
+    """
+    Поддельная модель чата: отдает заданные ответы по очереди и запоминает запросы
+
+    Ответ-исключение бросается, как бросил бы его SDK провайдера. Структурированный
+    вывод отдает сырой ответ, как with_structured_output(include_raw=True) моделей
+    LangChain; разбор по схеме делает проверяемый код
+    """
+
+    replies: list[Any]
+    model: str = "fake"
+    requests: list[list[BaseMessage]] = Field(default_factory=list)
+    schemas: list[type[BaseModel]] = Field(default_factory=list)
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
+
+    def _generate(
+        self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any
+    ) -> ChatResult:
+        assert self.replies, "Поддельной модели не задан ответ на запрос"
+        self.requests.append(messages)
         reply = self.replies.pop(0)
-        yield SimpleNamespace(get_final_message=lambda: reply)
+        if isinstance(reply, Exception):
+            raise reply
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def with_structured_output(  # type: ignore[override]
+        self,
+        schema: type[BaseModel],
+        *,
+        include_raw: bool = False,
+        method: str = "",
+        **kwargs: Any,
+    ) -> Runnable[Any, dict[str, Any]]:
+        assert (method, include_raw) == ("json_schema", True), (method, include_raw)
+        self.schemas.append(schema)
+        return self | RunnableLambda(
+            lambda raw: {"raw": raw, "parsed": None, "parsing_error": None}
+        )

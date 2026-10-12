@@ -1,11 +1,15 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from os import environ as os_environ
-from typing import Literal, Self, get_args
+from typing import Self
 
 ENV_PREFIX = "RUTS_ADAPT_"
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
-EFFORTS: tuple[Effort, ...] = get_args(Effort)
+# Уровни усилия, которые принимает модель чата LangChain каждого провайдера (reasoning_effort)
+EFFORTS = {
+    "anthropic": ("low", "medium", "high", "xhigh", "max"),
+    "openai": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "google_genai": ("minimal", "low", "medium", "high"),
+}
 SWITCHES = {"1": True, "0": False}
 
 
@@ -15,21 +19,34 @@ class ModelSettings:
     Настройки вызова модели для одной роли
 
     Описание:
-        Ответ модели приходит потоком, поэтому max_tokens может быть большим;
-        в него входит и мышление модели, а не только ответ
+        Модель задается как провайдер:модель, как в init_chat_model LangChain;
+        провайдеры - anthropic, openai, google_genai (Gemini). Усилие - уровень
+        рассуждения модели, у каждого провайдера свой набор; None - умолчание
+        провайдера, для моделей без рассуждения. В max_tokens входит и мышление
+        модели, а не только ответ
 
     Атрибуты:
-        model (str): Модель
-        effort (str): Усилие модели (low, medium, high, xhigh, max)
+        model (str): Провайдер и модель
+        effort (str | None): Усилие модели
         max_tokens (int): Наибольшее число токенов ответа вместе с мышлением
-        fallbacks (bool): При отказе повторить запрос на резервной модели,
-            которую API выбирает по категории отказа
+        fallbacks (bool): Только для anthropic: при отказе повторить запрос
+            на резервной модели, которую API выбирает по категории отказа
     """
 
-    model: str = "claude-opus-5-5"
-    effort: Effort = "high"
+    model: str = "anthropic:claude-opus-5-5"
+    effort: str | None = "high"
     max_tokens: int = 64_000
     fallbacks: bool = True
+
+    @property
+    def provider(self) -> str:
+        """Провайдер модели"""
+        return self.model.partition(":")[0]
+
+    @property
+    def name(self) -> str:
+        """Модель без провайдера"""
+        return self.model.partition(":")[2]
 
 
 @dataclass(frozen=True)
@@ -42,7 +59,8 @@ class Settings:
         по ним черновики. Настройка роли читается из переменной окружения
         RUTS_ADAPT_<РОЛЬ>_<НАСТРОЙКА> (RUTS_ADAPT_JUDGE_EFFORT), резервная модель
         для обеих ролей - из RUTS_ADAPT_FALLBACKS (1 или 0); если переменная
-        не задана, остается значение по умолчанию
+        не задана, остается значение по умолчанию, пустое усилие - умолчание
+        провайдера
 
     Атрибуты:
         writer (ModelSettings): Настройки писателя
@@ -67,9 +85,11 @@ class Settings:
             ValueError: Если значение переменной недопустимо
 
         Пример использования:
-            >>> settings = Settings.from_env({"RUTS_ADAPT_JUDGE_EFFORT": "max"})
-            >>> settings.writer.effort, settings.judge.effort, settings.judge.model
-            ('high', 'max', 'claude-opus-5-5')
+            >>> settings = Settings.from_env(
+            ...     {"RUTS_ADAPT_JUDGE_MODEL": "openai:gpt-5", "RUTS_ADAPT_JUDGE_EFFORT": "medium"}
+            ... )
+            >>> settings.writer.model, settings.judge.provider, settings.judge.effort
+            ('anthropic:claude-opus-5-5', 'openai', 'medium')
         """
         environ = os_environ if environ is None else environ
         fallbacks = _switch(environ, "FALLBACKS", ModelSettings.fallbacks)
@@ -81,26 +101,27 @@ class Settings:
 
 def _model_settings(environ: Mapping[str, str], role: str, fallbacks: bool) -> ModelSettings:
     """Настройки роли из переменных RUTS_ADAPT_<РОЛЬ>_*"""
-    model = environ.get(f"{ENV_PREFIX}{role}_MODEL", ModelSettings.model)
-    if not model.strip():
-        raise ValueError(f"{ENV_PREFIX}{role}_MODEL не должна быть пустой")
+    variable = f"{ENV_PREFIX}{role}_MODEL"
+    model = environ.get(variable, ModelSettings.model)
+    provider, _, name = model.partition(":")
+    if provider not in EFFORTS or not name:
+        raise ValueError(
+            f"{variable} должна иметь вид провайдер:модель с провайдером "
+            f"{', '.join(EFFORTS)}, получено {model!r}"
+        )
+    variable = f"{ENV_PREFIX}{role}_EFFORT"
+    effort = environ.get(variable, ModelSettings.effort) or None
+    if effort is not None and effort not in EFFORTS[provider]:
+        raise ValueError(
+            f"{variable} для {provider} должна быть одним из значений "
+            f"{', '.join(EFFORTS[provider])} или пустой, получено {effort!r}"
+        )
     return ModelSettings(
         model=model,
-        effort=_effort(environ, f"{role}_EFFORT"),
+        effort=effort,
         max_tokens=_positive_int(environ, f"{role}_MAX_TOKENS", ModelSettings.max_tokens),
         fallbacks=fallbacks,
     )
-
-
-def _effort(environ: Mapping[str, str], name: str) -> Effort:
-    """Усилие модели из переменной или значение по умолчанию"""
-    variable = ENV_PREFIX + name
-    raw = environ.get(variable, ModelSettings.effort)
-    if raw not in EFFORTS:
-        raise ValueError(
-            f"{variable} должна быть одним из значений {', '.join(EFFORTS)}, получено {raw!r}"
-        )
-    return raw
 
 
 def _positive_int(environ: Mapping[str, str], name: str, default: int) -> int:
