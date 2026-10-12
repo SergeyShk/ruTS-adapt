@@ -2,6 +2,7 @@ import importlib
 import io
 import os
 import runpy
+import signal
 import sys
 from importlib.metadata import version
 from types import SimpleNamespace
@@ -11,10 +12,11 @@ import pytest
 import ruts_adapt
 from ruts_adapt import cli
 from ruts_adapt.cli import ArgumentParser, main
-from ruts_adapt.model import ModelError
-from ruts_adapt.tasks import Draft, Facts
+from ruts_adapt.graph import build_graph
+from ruts_adapt.tasks import Draft, Facts, Verdict
 from tests.fakes import FakeChatModel, anthropic
 from tests.samples import DECREE, FACTS, KEPT, SIMPLE
+from tests.test_graph import FAST
 
 VERSION = f"ruts-adapt {ruts_adapt.__version__}, ruts {version('ruts')}\n"
 
@@ -243,12 +245,12 @@ def test_model_create_error(capsys, monkeypatch, stdin):
     ("failure", "message"),
     [
         (
-            ModelError("Модель m отказалась отвечать (причина: bio)"),
-            "ошибка модели: Модель m отказалась отвечать (причина: bio)",
+            anthropic(stop_reason="refusal", category="bio"),
+            "ошибка модели: Модель claude-opus-5-5 отказалась отвечать (причина: bio)",
         ),
         (
             ConnectionError("connection refused"),
-            "ошибка при вызове модели: ConnectionError: connection refused",
+            "ошибка модели: Модель fake не ответила: ConnectionError: connection refused",
         ),
     ],
     ids=["model", "provider"],
@@ -261,6 +263,53 @@ def test_run_errors(capsys, models, stdin, failure, message):
     error = fail(capsys, ["-g", "2"], code=1)
     assert error.endswith(f"ruts-adapt: {message}\n")
     assert capsys.readouterr().out == ""
+
+
+def test_program_error(models, stdin, monkeypatch):
+    """Ошибка программы не выдается за ошибку модели: трейсбек остается"""
+    stdin(DECREE.encode())
+    models(*fakes())
+
+    def broken(text):
+        raise RuntimeError("ошибка в программе")
+
+    monkeypatch.setattr("ruts_adapt.graph.measure", broken)
+    with pytest.raises(RuntimeError, match="ошибка в программе"):
+        main(["-g", "2"])
+
+
+def test_tokens_with_retries(capsys, models, stdin, monkeypatch):
+    """Итог считает токены всех вызовов модели, и повторенных тоже"""
+    stdin(DECREE.encode())
+    incomplete = anthropic(Verdict(checks=KEPT.checks[:1]))
+    writer = FakeChatModel(replies=[anthropic(Draft(text=SIMPLE))])
+    judge = FakeChatModel(replies=[anthropic(Facts(facts=FACTS)), incomplete, anthropic(KEPT)])
+    models(writer, judge)
+    monkeypatch.setattr(cli, "build_graph", lambda: build_graph(FAST))
+    main(["-g", "2"])
+    assert "Токены всех вызовов модели: 660\n" in capsys.readouterr().err
+
+
+def test_interrupt_handler(models, stdin, monkeypatch):
+    """На время работы графа Ctrl+C завершает процесс сразу, после - прежний обработчик"""
+    stdin(DECREE.encode())
+    seen = []
+
+    def facts():
+        seen.append(signal.getsignal(signal.SIGINT))
+        return anthropic(Facts(facts=FACTS))
+
+    writer, judge = fakes()
+    judge.replies[0] = facts
+    models(writer, judge)
+    before = signal.getsignal(signal.SIGINT)
+    main(["-g", "2"])
+    assert seen == [cli._interrupt]
+    assert signal.getsignal(signal.SIGINT) is before
+    exits = []
+    monkeypatch.setattr(cli.os, "_exit", exits.append)
+    cli._interrupt(signal.SIGINT, None)
+    assert exits == [130]
 
 
 def test_interrupted(capsys, models, stdin):

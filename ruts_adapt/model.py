@@ -154,7 +154,8 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
 
     Исключения:
         ModelError: Если модель отказалась отвечать, ответ обрезан по лимиту
-            токенов, остановился по другой причине или не соответствует схеме
+            токенов, остановился по другой причине, не соответствует схеме
+            или вызов модели не удался (ключ, лимиты, сеть)
     """
     structured = model.with_structured_output(schema, method="json_schema", include_raw=True)
     name = _model_name(model)
@@ -173,6 +174,9 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
         if reason == "content_filter":
             raise ModelError(_REFUSED.format(name=name, detail=reason)) from error
         raise ModelError(_MISMATCH.format(schema=schema.__name__), retryable=True) from error
+    except Exception as error:
+        # Ключ, лимиты, сеть: SDK провайдера уже повторил запрос, повтор узла не поможет
+        raise ModelError(f"Модель {name} не ответила: {type(error).__name__}: {error}") from error
     raw: AIMessage = cast(dict[str, Any], result)["raw"]
     name = raw.response_metadata.get("model_name") or name
     stop, detail = _stop(raw)

@@ -46,7 +46,6 @@ def test_accepted_first():
     assert attempt.measurement == measure(SIMPLE)
     assert attempt.checks == KEPT.checks
     assert attempt.tokens == 165 + 165
-    assert state["facts_tokens"] == 165
     assert "<критика>" not in writer.requests[0][1].content
 
 

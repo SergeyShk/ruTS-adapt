@@ -41,7 +41,6 @@ class Reporter:
     Атрибуты:
         source (Measurement | None): Уровень и признаки исходника
         attempts (list[Attempt]): Попытки в порядке появления
-        tokens (int): Токены всех вызовов модели
     """
 
     def __init__(self, target: Target, max_attempts: int, out: TextIO) -> None:
@@ -50,7 +49,6 @@ class Reporter:
         self.out = out
         self.source: Measurement | None = None
         self.attempts: list[Attempt] = []
-        self.tokens = 0
         self._number = 0
 
     def update(self, node: str, values: dict[str, Any]) -> None:
@@ -69,7 +67,6 @@ class Reporter:
                 f"{self.source.n_words} слов; {DIRECTIONS[direction]} «{self.target.level}»"
             )
         elif node == "extract_facts":
-            self.tokens += values["facts_tokens"]
             self._print(f"Фактов в исходном тексте: {len(values['facts'])}")
         elif node == "rewrite":
             self._number += 1
@@ -86,20 +83,19 @@ class Reporter:
                 f"потеряно {lost}"
             )
         elif node == "record":
-            attempt = values["attempts"][0]
-            self.attempts.append(attempt)
-            self.tokens += attempt.tokens
+            self.attempts.append(values["attempts"][0])
         elif node == "critique":
             self._print("Критика:")
             for line in values["critique"].splitlines():
                 self._print(f"  {line}")
 
-    def finish(self, result: Result) -> None:
+    def finish(self, result: Result, tokens: int = 0) -> None:
         """
         Итог, таблица попыток и предупреждения
 
         Аргументы:
             result (Result): Итог адаптации
+            tokens (int): Токены всех вызовов модели, включая повторы
         """
         if result.outcome is Outcome.ON_LEVEL:
             self._print("Текст уже на уровне цели, переписывать не нужно")
@@ -124,7 +120,7 @@ class Reporter:
                 f"Лимит попыток исчерпан, выбрана лучшая - попытка {chosen.number}: "
                 + ", ".join(reasons)
             )
-        self._print(f"Токены: {self.tokens}")
+        self._print(f"Токены всех вызовов модели: {tokens}")
         drop = mtld_drop(self.source, chosen.measurement)
         if drop is not None and drop > MTLD_DROP:
             self._print(

@@ -1,11 +1,16 @@
 import argparse
 import io
+import os
 import re
+import signal
 import sys
 from collections.abc import Iterable, Sequence
 from importlib.metadata import version
 from pathlib import Path
+from types import FrameType
 from typing import Any, NoReturn
+
+from langchain_core.callbacks import get_usage_metadata_callback
 
 from . import __version__
 from .attempts import Result
@@ -77,7 +82,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         Читает текст из файла или stdin, адаптирует его к классу читателя и печатает
         итоговый текст в stdout, а ход работы, таблицу попыток и итог - в stderr.
         Неверные аргументы, настройки и входной текст завершают команду с кодом 2,
-        ошибки модели - с кодом 1, Ctrl+C - с кодом 130 без трейсбека
+        ошибки модели - с кодом 1, Ctrl+C - с кодом 130 без трейсбека, не дожидаясь
+        ответа модели
 
     Аргументы:
         argv (list[str]): Аргументы командной строки; None - sys.argv
@@ -136,6 +142,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         settings = Settings.from_env()
         text = _read(args.file)
         check_russian(text)
+    except ValueError as error:
+        parser.error(str(error))
+    try:
         context = Context(writer=chat_model(settings.writer), judge=chat_model(settings.judge))
     except ValueError as error:
         parser.error(str(error))
@@ -147,8 +156,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         sys.exit(INTERRUPTED)
     except ModelError as error:
         _fail(f"ошибка модели: {error}")
-    except Exception as error:
-        _fail(f"ошибка при вызове модели: {type(error).__name__}: {error}")
     print(result.text)
 
 
@@ -172,14 +179,29 @@ def adapt(text: str, target: Target, max_attempts: int, context: Context, out: A
     reporter = Reporter(target, max_attempts, out)
     state: State = {"source": text, "target": target, "max_attempts": max_attempts}
     result: Result | None = None
-    for update in build_graph().stream(state, context=context, stream_mode="updates"):
-        for node, values in update.items():
-            reporter.update(node, values)
-            if node == "finish":
-                result = values["result"]
+    previous = signal.signal(signal.SIGINT, _interrupt)
+    try:
+        with get_usage_metadata_callback() as usage:
+            for update in build_graph().stream(state, context=context, stream_mode="updates"):
+                for node, values in update.items():
+                    reporter.update(node, values)
+                    if node == "finish":
+                        result = values["result"]
+    finally:
+        signal.signal(signal.SIGINT, previous)
     assert result is not None
-    reporter.finish(result)
+    tokens = sum(
+        item["input_tokens"] + item["output_tokens"] for item in usage.usage_metadata.values()
+    )
+    reporter.finish(result, tokens)
     return result
+
+
+def _interrupt(signum: int, frame: FrameType | None) -> None:
+    """Ctrl+C: выход сразу, не дожидаясь вызова модели в параллельной ветви графа"""
+    # KeyboardInterrupt дождался бы потоков LangGraph, а запрос к модели идет минутами
+    sys.stderr.flush()
+    os._exit(INTERRUPTED)
 
 
 def _target(raw: str) -> Target:

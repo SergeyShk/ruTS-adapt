@@ -119,6 +119,21 @@ def test_rewrite_empty():
     assert info.value.retryable
 
 
+@pytest.mark.parametrize(
+    ("draft", "message"),
+    [
+        ("Rules about money.", "Букв русского алфавита - только 0%"),
+        ("…", "В тексте нет букв"),
+    ],
+    ids=["english", "no-letters"],
+)
+def test_rewrite_not_russian(draft, message):
+    """Черновик проверяется, как вход: не русский текст - ошибка, которую стоит повторить"""
+    with pytest.raises(ModelError, match=f"^Черновик модели не подходит: {message}") as info:
+        rewrite(fake(Draft(text=draft)), SOURCE, measure(SOURCE), Target.from_grade(5), FACTS)
+    assert info.value.retryable
+
+
 def test_judge():
     verdict = Verdict(checks=checks((2, FactStatus.LOST), (1, FactStatus.KEPT)))
     model = fake(verdict)

@@ -20,7 +20,7 @@ class Attempt:
         measurement (Measurement): Уровень и признаки черновика
         checks (list[FactCheck]): Проверки фактов исходника в черновике
         gap (float): Расстояние сводного класса до ступени цели (Target.gap)
-        tokens (int): Токены писателя и судьи на эту попытку
+        tokens (int): Токены писателя и судьи на эту попытку, без повторов узлов
     """
 
     number: int
@@ -120,9 +120,9 @@ def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[
     )
     lines = []
     if attempt.gap > 0:
-        lines.append(f"{level}: текст все еще сложнее цели на {attempt.gap:.1f} класса.")
+        lines.append(f"{level}: текст сложнее цели на {attempt.gap:.1f} класса.")
     elif attempt.gap < 0:
-        lines.append(f"{level}: текст получился проще цели на {-attempt.gap:.1f} класса.")
+        lines.append(f"{level}: текст проще цели на {-attempt.gap:.1f} класса.")
     else:
         lines.append(f"{level}: уровень достигнут, сохраните его.")
     if attempt.gap != 0:
@@ -141,7 +141,7 @@ def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[
     if attempt.distorted:
         lines.append("Искажены факты, верните их точный смысл:")
         lines += [
-            f"{check.fact}. {facts[check.fact - 1]} В черновике: «{check.quote}»"
+            f"{check.fact}. {facts[check.fact - 1]} - в черновике: «{check.quote}»"
             for check in attempt.distorted
         ]
     if attempt.lost:

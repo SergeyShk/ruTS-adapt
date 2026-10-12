@@ -92,7 +92,8 @@ class FakeChatModel(BaseChatModel):
     """
     Поддельная модель чата: отдает заданные ответы по очереди и запоминает запросы
 
-    Ответ-исключение бросается, как бросил бы его SDK провайдера. Структурированный
+    Ответ-исключение бросается, как бросил бы его SDK провайдера, ответ-функция
+    вызывается в момент запроса. Структурированный
     вывод отдает сырой ответ, как with_structured_output(include_raw=True) моделей
     LangChain; разбор по схеме делает проверяемый код
     """
@@ -112,6 +113,8 @@ class FakeChatModel(BaseChatModel):
         assert self.replies, "Поддельной модели не задан ответ на запрос"
         self.requests.append(messages)
         reply = self.replies.pop(0)
+        if callable(reply):
+            reply = reply()
         if isinstance(reply, BaseException):
             raise reply
         return ChatResult(generations=[ChatGeneration(message=reply)])

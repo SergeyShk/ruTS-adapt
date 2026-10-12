@@ -44,7 +44,7 @@ def test_updates():
         "  Строка 1",
         "  Строка 2",
     ]
-    assert (report.attempts, report.tokens) == ([first], 165 + 330)
+    assert report.attempts == [first]
 
 
 def test_direction():
@@ -69,12 +69,15 @@ def test_accepted():
     report, out = reporter()
     report.source = SOURCE
     chosen = attempt(1, SIMPLE)
-    report.attempts, report.tokens = [chosen], 495
-    report.finish(Result(Outcome.ACCEPTED, SIMPLE, chosen))
+    report.attempts = [chosen]
+    report.finish(Result(Outcome.ACCEPTED, SIMPLE, chosen), tokens=495)
     lines = out.getvalue().splitlines()
     assert lines[0] == ""
     assert lines[1].startswith("Попытка   Класс  Ступень")
-    assert lines[-2:] == ["Готово: попытка 1 на уровне цели, все факты сохранены", "Токены: 495"]
+    assert lines[-2:] == [
+        "Готово: попытка 1 на уровне цели, все факты сохранены",
+        "Токены всех вызовов модели: 495",
+    ]
 
 
 def test_best():

@@ -335,6 +335,16 @@ def test_schema_mismatch(reply):
     assert info.value.retryable
 
 
+def test_ask_call_error():
+    """Ошибка вызова провайдера - ключ, лимиты, сеть - становится ошибкой модели без повтора"""
+    failure = ConnectionError("connection refused")
+    with pytest.raises(ModelError) as info:
+        ask(FakeChatModel(replies=[failure]), "", "Вопрос", Answer)
+    assert str(info.value) == "Модель fake не ответила: ConnectionError: connection refused"
+    assert info.value.__cause__ is failure
+    assert not info.value.retryable
+
+
 def test_ask_no_usage():
     """Провайдер не сообщил токены - в ответе нули"""
     reply = gemini(ANSWER)

@@ -4,6 +4,7 @@ from enum import StrEnum
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
+from .language import check_russian
 from .measure import Direction, Measurement, Target
 from .model import ModelError, Reply, ask
 
@@ -130,7 +131,7 @@ def rewrite(
 
     Исключения:
         ValueError: Если исходный текст уже на уровне цели
-        ModelError: Если ответ модели нельзя использовать или текст пуст
+        ModelError: Если ответ модели нельзя использовать, текст пуст или не на русском
     """
     direction = target.direction(measurement.grade)
     if direction is Direction.KEEP:
@@ -152,6 +153,10 @@ def rewrite(
     text = reply.output.text.strip()
     if not text:
         raise ModelError("Модель вернула пустой текст", retryable=True)
+    try:
+        check_russian(text)
+    except ValueError as error:
+        raise ModelError(f"Черновик модели не подходит: {error}", retryable=True) from error
     return reply.with_output(text)
 
 

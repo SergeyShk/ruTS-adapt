@@ -39,7 +39,6 @@ class State(TypedDict):
         max_attempts (int): Наибольшее число попыток
         source_measurement (Measurement): Уровень и признаки исходника
         facts (list[str]): Факты исходника, выписанные один раз
-        facts_tokens (int): Токены судьи на факты
         draft (str): Черновик текущей попытки
         draft_tokens (int): Токены писателя на черновик
         draft_measurement (Measurement): Уровень и признаки черновика
@@ -55,7 +54,6 @@ class State(TypedDict):
     max_attempts: int
     source_measurement: NotRequired[Measurement]
     facts: NotRequired[list[str]]
-    facts_tokens: NotRequired[int]
     draft: NotRequired[str]
     draft_tokens: NotRequired[int]
     draft_measurement: NotRequired[Measurement]
@@ -88,7 +86,7 @@ def after_source(state: State) -> Literal["finish", "extract_facts"]:
 def extract_facts(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
     """Факты исходника: один раз, все черновики сверяются с одним списком"""
     reply = tasks.extract_facts(runtime.context.judge, state["source"])
-    return {"facts": reply.output, "facts_tokens": reply.input_tokens + reply.output_tokens}
+    return {"facts": reply.output}
 
 
 def rewrite(state: State, runtime: Runtime[Context]) -> dict[str, Any]:
