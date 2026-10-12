@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
-from anthropic import Anthropic, transform_schema
+from anthropic import Anthropic, omit, transform_schema
+from anthropic.types.beta import BetaMessage
 from pydantic import BaseModel, ValidationError
 
 from .settings import ModelSettings
@@ -25,8 +26,8 @@ class Reply(Generic[T]):
     Атрибуты:
         output (Any): Разобранный ответ
         model (str): Модель, которая ответила; при отказе основной - резервная
-        input_tokens (int): Токены запроса
-        output_tokens (int): Токены ответа вместе с мышлением
+        input_tokens (int): Токены запроса по всем попыткам, включая отказавшую модель
+        output_tokens (int): Токены ответа вместе с мышлением по всем попыткам
     """
 
     output: T
@@ -49,7 +50,8 @@ def ask(
         Ответ ограничен JSON-схемой Pydantic-модели (structured outputs) и приходит
         потоком. Причина остановки проверяется до разбора: отказ и обрезанный
         на max_tokens ответ - ошибка, а не пустой результат. Если основная
-        модель отказалась и ответила резервная, разбирается ответ резервной
+        модель отказалась посреди ответа и ответила резервная, разбирается ее
+        ответ, а если он продолжает частичный текст основной - оба вместе
 
     Аргументы:
         client (Anthropic): Клиент API
@@ -65,19 +67,18 @@ def ask(
         ModelError: Если модель отказалась отвечать, ответ обрезан на max_tokens,
             остановился по другой причине или не соответствует схеме
     """
-    request: dict[str, Any] = {
-        "model": settings.model,
-        "max_tokens": settings.max_tokens,
-        "system": system,
-        "messages": [{"role": "user", "content": prompt}],
-        "output_config": {
+    with client.beta.messages.stream(
+        model=settings.model,
+        max_tokens=settings.max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": prompt}],
+        output_config={
             "effort": settings.effort,
             "format": {"type": "json_schema", "schema": transform_schema(schema)},
         },
-    }
-    if settings.fallbacks:
-        request |= {"fallbacks": "default", "betas": [FALLBACKS_BETA]}
-    with client.beta.messages.stream(**request) as stream:
+        fallbacks="default" if settings.fallbacks else omit,
+        betas=[FALLBACKS_BETA] if settings.fallbacks else omit,
+    ) as stream:
         message = stream.get_final_message()
     if message.stop_reason == "refusal":
         category = message.stop_details.category if message.stop_details else None
@@ -90,12 +91,34 @@ def ask(
         )
     if message.stop_reason != "end_turn":
         raise ModelError(f"Модель остановилась по неожиданной причине: {message.stop_reason}")
-    # Отказ посреди потока оставляет частичный текст первой модели до блока fallback
+    return Reply(_parse(message, schema), message.model, *_tokens(message))
+
+
+def _parse(message: BetaMessage, schema: type[SchemaT]) -> SchemaT:
+    """Разбор текста ответа по схеме"""
     switches = [i for i, block in enumerate(message.content) if block.type == "fallback"]
-    blocks = message.content[switches[-1] + 1 :] if switches else message.content
-    text = "".join(block.text for block in blocks if block.type == "text")
-    try:
-        output = schema.model_validate_json(text)
-    except ValidationError as error:
-        raise ModelError(f"Ответ модели не соответствует схеме {schema.__name__}") from error
-    return Reply(output, message.model, message.usage.input_tokens, message.usage.output_tokens)
+    texts = ["".join(block.text for block in message.content if block.type == "text")]
+    if switches:
+        after = message.content[switches[-1] + 1 :]
+        # Резервная модель может начать ответ заново или продолжить частичный текст отказавшей
+        texts.insert(0, "".join(block.text for block in after if block.type == "text"))
+    for text in texts:
+        try:
+            return schema.model_validate_json(text)
+        except ValidationError as error:
+            last_error = error
+    raise ModelError(f"Ответ модели не соответствует схеме {schema.__name__}") from last_error
+
+
+def _tokens(message: BetaMessage) -> tuple[int, int]:
+    """Токены запроса и ответа по всем попыткам: верхний usage считает только ответившую"""
+    attempts = [
+        usage
+        for usage in message.usage.iterations or []
+        if usage.type in ("message", "fallback_message")
+    ]
+    if not attempts:
+        return message.usage.input_tokens, message.usage.output_tokens
+    input_tokens = sum(usage.input_tokens for usage in attempts)
+    output_tokens = sum(usage.output_tokens for usage in attempts)
+    return input_tokens, output_tokens

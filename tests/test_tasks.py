@@ -63,8 +63,8 @@ def test_rewrite():
     assert request["system"] == REWRITE_SYSTEM
     prompt = request["messages"][0]["content"]
     assert prompt.startswith(
-        "Упрости текст для читателя уровня «4-6-й класс (9-11 лет)». "
-        "Сейчас текст читается как «аспирантура (старше 22 лет)»: в среднем 18.0 слова "
+        "Упрости исходный текст для читателя уровня «4-6-й класс (9-11 лет)». "
+        "Сейчас он читается как «аспирантура (старше 22 лет)»: в среднем 18.0 слова "
         "в предложении, 3.61 слога и 8.33 буквы в слове, 50% слов от пяти слогов."
     )
     assert f"<исходный_текст>\n{SOURCE}\n</исходный_текст>" in prompt
@@ -86,7 +86,9 @@ def test_rewrite_retry():
         previous="Прошлый черновик",
         critique="Предложения длинные",
     )
-    prompt = client.requests[0]["messages"][0]["content"]
+    (request,) = client.requests
+    assert "Перепиши заново исходный текст, учитывая критику" in request["system"]
+    prompt = request["messages"][0]["content"]
     assert prompt.endswith(
         "<прошлая_попытка>\nПрошлый черновик\n</прошлая_попытка>\n\n<критика>\nПредложения длинные\n</критика>"
     )
@@ -98,7 +100,7 @@ def test_rewrite_complicate():
     client = FakeClient(message(Draft(text="Текст")))
     rewrite(client, SETTINGS, text, measure(text), Target.from_grade(10), ["Кот спит"])
     assert client.requests[0]["messages"][0]["content"].startswith(
-        "Усложни текст для читателя уровня «10-11-й класс (15-16 лет)»"
+        "Усложни исходный текст для читателя уровня «10-11-й класс (15-16 лет)»"
     )
 
 

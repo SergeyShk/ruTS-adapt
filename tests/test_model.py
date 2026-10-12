@@ -54,6 +54,44 @@ def test_ask_fallback_model(partial):
     assert reply == Reply(ANSWER, "claude-opus-5", 120, 45)
 
 
+def test_ask_fallback_continuation():
+    """Если резервная модель продолжила частичный текст основной, разбирается их сумма"""
+    client = FakeClient(message('кот", "спит"]}', model="claude-opus-5", partial='{"words": ["'))
+    assert ask(client, ModelSettings(), "", "Вопрос", Answer).output == ANSWER
+
+
+def test_ask_tokens_by_attempts():
+    """Верхний usage считает только ответившую модель, токены отказавшей берутся из iterations"""
+    iterations = [
+        {
+            "type": "message",
+            "model": "claude-opus-5-5",
+            "input_tokens": 1000,
+            "output_tokens": 800,
+        },
+        {"type": "compaction", "input_tokens": 5, "output_tokens": 5},
+        {
+            "type": "fallback_message",
+            "model": "claude-opus-5",
+            "input_tokens": 1000,
+            "output_tokens": 300,
+        },
+    ]
+    client = FakeClient(message(ANSWER, model="claude-opus-5", iterations=iterations))
+    reply = ask(client, ModelSettings(), "", "Вопрос", Answer)
+    assert (reply.input_tokens, reply.output_tokens) == (2000, 1100)
+
+
+def test_fake_client_checks_request():
+    """Поддельный клиент не пропускает запрос, который отверг бы настоящий SDK"""
+    stream = FakeClient(message(ANSWER)).beta.messages.stream
+    with (
+        pytest.raises(TypeError, match="fallback"),
+        stream(model="m", max_tokens=1, messages=[], fallback="default"),
+    ):
+        pass
+
+
 @pytest.mark.parametrize(
     ("category", "text"),
     [("bio", "категория отказа: bio"), (None, "категория отказа: не указана")],
