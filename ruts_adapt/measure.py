@@ -24,9 +24,11 @@ class Measurement:
 
     Описание:
         Уровень - сводный класс ruTS (медиана формул класса и индекса Флеша)
-        и его прочтение как ступени обучения и возраста читателя; признаки -
-        то, на что опираются формулы: длина предложений, доли сложных и длинных
-        слов. Сложное слово - от 4 слогов, длинное - от 6 букв, как в BasicStats
+        и его прочтение как ступени обучения и возраста читателя. Признаки -
+        величины, из которых складываются эти формулы: длина предложения
+        (все формулы), длина слова в слогах (Флеш-Кинкайд, индекс Флеша)
+        и в буквах (Колман-Лиау, ARI, формула Соловьева, Иванова, Солнышкиной),
+        доля сложных слов - от 5 слогов (SMOG, Дейл-Чейл, Ганнинг)
 
     Атрибуты:
         grade (float): Сводный класс
@@ -34,10 +36,11 @@ class Measurement:
         n_words (int): Количество слов
         n_sents (int): Количество предложений
         words_per_sent (float): Средняя длина предложения в словах
+        syllables_per_word (float): Средняя длина слова в слогах
+        letters_per_word (float): Средняя длина слова в буквах
         complex_words (float): Доля сложных слов
-        long_words (float): Доля длинных слов
-        mtld (float): Лексическое разнообразие MTLD; inf, если текст так короток,
-            что TTR ни разу не опускается до порога
+        mtld (float): Лексическое разнообразие MTLD; inf, если в тексте нет
+            повторяющихся слов
     """
 
     grade: float
@@ -45,8 +48,9 @@ class Measurement:
     n_words: int
     n_sents: int
     words_per_sent: float
+    syllables_per_word: float
+    letters_per_word: float
     complex_words: float
-    long_words: float
     mtld: float
 
 
@@ -67,19 +71,22 @@ def measure(text: str) -> Measurement:
         >>> m = measure("Существуют три вида лжи: ложь, наглая ложь и статистика")
         >>> m.grade, m.level
         (2.5, '1-3-й класс (6-8 лет)')
-        >>> m.words_per_sent, round(m.complex_words, 2), round(m.long_words, 2)
-        (9.0, 0.22, 0.33)
+        >>> m.words_per_sent, m.syllables_per_word, m.letters_per_word, m.complex_words
+        (9.0, 2.0, 5.0, 0.0)
     """
-    bs = BasicStats(text, normalize=True)
+    bs = BasicStats(text)
     rs = ReadabilityStats(bs)
+    n_words = bs.n_words
     return Measurement(
         grade=rs.consensus_grade,
         level=rs.describe_grade(),
-        n_words=bs.n_words,
+        n_words=n_words,
         n_sents=bs.n_sents,
-        words_per_sent=bs.n_words / bs.n_sents,
-        complex_words=bs.p_complex_words,
-        long_words=bs.p_long_words,
+        words_per_sent=n_words / bs.n_sents,
+        syllables_per_word=bs.n_syllables / n_words,
+        # Буквы только учтенных слов, как в формулах ruTS, а не всего текста
+        letters_per_word=sum(n * count for n, count in bs.c_letters.items()) / n_words,
+        complex_words=bs.count_words_by_syllables(rs.smog_complex_syl_factor) / n_words,
         mtld=DiversityStats(text).mtld,
     )
 

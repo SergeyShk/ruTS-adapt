@@ -23,25 +23,29 @@ def test_measure():
     assert m.level == rs.describe_grade()
     assert (m.n_words, m.n_sents) == (bs.n_words, bs.n_sents) == (35, 1)
     assert m.words_per_sent == 35.0
-    assert m.complex_words == bs.n_complex_words / bs.n_words
-    assert m.long_words == bs.n_long_words / bs.n_words
+    assert m.syllables_per_word == bs.n_syllables / bs.n_words
+    assert m.letters_per_word == sum(n * count for n, count in bs.c_letters.items()) / bs.n_words
+    assert m.complex_words == bs.count_words_by_syllables(rs.smog_complex_syl_factor) / bs.n_words
+    assert rs.smog_complex_syl_factor == 5
     assert m.mtld == DiversityStats(DECREE).mtld
 
 
 def test_measure_order():
-    """Сказка читается проще постановления: ниже класс, короче предложения, проще слова"""
+    """Сказка читается проще постановления: ниже класс, короче предложения и слова, меньше сложных"""
     tale, decree = measure(TALE), measure(DECREE)
     assert tale.level == "1-3-й класс (6-8 лет)"
     assert decree.level == "аспирантура (старше 22 лет)"
     assert tale.grade < decree.grade
     assert tale.words_per_sent < decree.words_per_sent
+    assert tale.syllables_per_word < decree.syllables_per_word
+    assert tale.letters_per_word < decree.letters_per_word
     assert tale.complex_words < decree.complex_words
-    assert tale.long_words < decree.long_words
 
 
-def test_measure_short_mtld():
-    """MTLD короткого текста без повторов не определен: ruts дает inf"""
-    assert measure("Кот спит.").mtld == math.inf
+def test_measure_mtld_no_repeats():
+    """MTLD текста без повторяющихся слов не определен: ruts дает inf, с одним повтором - число"""
+    assert measure("Кот спит. Кот ест.").mtld == pytest.approx(4.48)
+    assert measure("Утром рыжий котенок выбрался из корзинки и побежал во двор").mtld == math.inf
 
 
 @pytest.mark.parametrize("text", ["", "  ", "..."])
