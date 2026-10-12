@@ -17,22 +17,21 @@ def anthropic(
     output: BaseModel | str = "",
     stop_reason: str = "end_turn",
     category: str | None = None,
-    model: str = "claude-opus-5-5",
     partial: str | None = None,
 ) -> AIMessage:
     """
     Ответ Claude, как его собирает ChatAnthropic из потока: блок мышления и текст
 
     С partial ответ повторяет отказ основной модели посреди потока: ее частичный
-    текст и ответ резервной модели отдельными блоками (блок fallback LangChain
-    из потока выбрасывает)
+    текст и ответ резервной модели отдельными блоками; блок fallback LangChain
+    из потока выбрасывает, а имя модели берет из начала потока - основной
     """
     content: list[str | dict[str, Any]] = [{"type": "thinking", "thinking": "", "index": 0}]
     if partial is not None:
         content.append({"type": "text", "text": partial, "index": 1})
     content.append({"type": "text", "text": _text(output), "index": 3})
     metadata: dict[str, Any] = {
-        "model_name": model,
+        "model_name": "claude-opus-5-5",
         "model_provider": "anthropic",
         "stop_reason": stop_reason,
         "stop_sequence": None,

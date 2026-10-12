@@ -40,7 +40,8 @@ class Reply(Generic[T]):
 
     Атрибуты:
         output (Any): Разобранный ответ
-        model (str): Модель, которая ответила, по данным провайдера
+        model (str): Модель по данным провайдера; если Claude отказался посреди ответа
+            и ответ дописала резервная модель, LangChain называет основную
         input_tokens (int): Токены запроса
         output_tokens (int): Токены ответа вместе с мышлением
     """
@@ -62,7 +63,8 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
     Описание:
         Ответ Claude приходит потоком: SDK Anthropic не отправляет без потока
         запрос, который может идти дольше 10 минут, а большой max_tokens
-        считается таким. Ключ API модель берет из переменной окружения
+        считается таким. Усилие и лимит сверяются с профилем модели LangChain,
+        если он их знает. Ключ API модель берет из переменной окружения
         провайдера: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
 
     Аргументы:
@@ -70,8 +72,13 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
 
     Вывод:
         BaseChatModel: Модель чата
+
+    Исключения:
+        ValueError: Если модель не поддерживает усилие или max_tokens больше ее предела
     """
-    options: dict[str, Any] = {"max_tokens": settings.max_tokens}
+    options: dict[str, Any] = {}
+    if settings.max_tokens is not None:
+        options["max_tokens"] = settings.max_tokens
     if settings.effort is not None:
         options["reasoning_effort"] = settings.effort
     if settings.provider == "anthropic":
@@ -81,6 +88,21 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
     model: BaseChatModel = init_chat_model(
         settings.name, model_provider=settings.provider, **options
     )
+    profile = model.profile or {}
+    levels = profile.get("reasoning_effort_levels")
+    if settings.effort is not None and (
+        (levels is not None and settings.effort not in levels)
+        or profile.get("reasoning_output") is False
+    ):
+        allowed = f"допустимо {', '.join(levels)}" if levels else "оставьте усилие пустым"
+        raise ValueError(
+            f"Модель {settings.model} не поддерживает усилие {settings.effort!r}: {allowed}"
+        )
+    limit = profile.get("max_output_tokens")
+    if settings.max_tokens is not None and limit is not None and settings.max_tokens > limit:
+        raise ValueError(
+            f"max_tokens={settings.max_tokens} больше предела модели {settings.model}: {limit}"
+        )
     return model
 
 
@@ -115,6 +137,14 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
         raise ModelError(_TRUNCATED.format(name=name)) from error
     except ContentFilterFinishReasonError as error:
         raise ModelError(_REFUSED.format(name=name, detail="content_filter")) from error
+    except ValidationError as error:
+        # В Responses API SDK OpenAI разбирает ответ по схеме, не глядя на status
+        reason = _incomplete_reason(error)
+        if reason == "max_output_tokens":
+            raise ModelError(_TRUNCATED.format(name=name)) from error
+        if reason == "content_filter":
+            raise ModelError(_REFUSED.format(name=name, detail=reason)) from error
+        raise ModelError(f"Ответ модели не соответствует схеме {schema.__name__}") from error
     raw: AIMessage = cast(dict[str, Any], result)["raw"]
     name = raw.response_metadata.get("model_name") or name
     stop, detail = _stop(raw)
@@ -222,6 +252,17 @@ def _block_text(block: str | dict[Any, Any]) -> str:
     if isinstance(block, str):
         return block
     return str(block.get("text", "")) if block.get("type") == "text" else ""
+
+
+def _incomplete_reason(error: Exception) -> str | None:
+    """Причина незавершенного ответа Responses API из HTTP-ответа, прикрепленного LangChain"""
+    response = getattr(error, "response", None)
+    try:
+        body = response.json() if response is not None else {}
+    except ValueError:
+        return None
+    reason = (body.get("incomplete_details") or {}).get("reason")
+    return reason if isinstance(reason, str) else None
 
 
 def _model_name(model: BaseChatModel) -> str:

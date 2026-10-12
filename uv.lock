@@ -3225,6 +3225,7 @@ dependencies = [
     { name = "langchain-anthropic" },
     { name = "langchain-google-genai" },
     { name = "langchain-openai" },
+    { name = "openai" },
     { name = "pydantic" },
     { name = "ruts" },
 ]
@@ -3253,6 +3254,7 @@ requires-dist = [
     { name = "langchain-anthropic", specifier = ">=1.7,<2" },
     { name = "langchain-google-genai", specifier = ">=4.4,<5" },
     { name = "langchain-openai", specifier = ">=1.7,<2" },
+    { name = "openai", specifier = ">=2.45,<4" },
     { name = "pydantic", specifier = ">=2" },
     { name = "ruts", specifier = ">=0.16,<0.17" },
 ]

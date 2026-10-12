@@ -19,8 +19,16 @@ def test_roles():
             "RUTS_ADAPT_JUDGE_MAX_TOKENS": "16000",
         }
     )
-    assert settings.writer == ModelSettings("google_genai:gemini-2.5-pro", "minimal", 64_000, True)
-    assert settings.judge == ModelSettings("openai:gpt-5", "high", 16_000, True)
+    assert settings.writer == ModelSettings("google_genai:gemini-2.5-pro", "minimal", None, True)
+    assert settings.judge == ModelSettings("openai:gpt-5", None, 16_000, True)
+
+
+def test_default_model_tuning():
+    """Усилие high и лимит 64 000 - для модели по умолчанию, даже заданной явно"""
+    settings = Settings.from_env({"RUTS_ADAPT_WRITER_MODEL": "anthropic:claude-opus-5-5"})
+    assert settings.writer == ModelSettings()
+    other = Settings.from_env({"RUTS_ADAPT_WRITER_MODEL": "anthropic:claude-haiku-4-5"})
+    assert other.writer == ModelSettings("anthropic:claude-haiku-4-5", None, None)
 
 
 def test_effort_default():

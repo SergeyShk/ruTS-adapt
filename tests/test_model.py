@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from google.genai.types import BlockedReason
 from langchain_anthropic import ChatAnthropic
@@ -66,6 +68,37 @@ def test_chat_model_openai(keys):
     assert model.model_kwargs == {}
 
 
+def test_chat_model_provider_defaults(keys):
+    """Без усилия и лимита модель получает умолчания провайдера"""
+    model = chat_model(ModelSettings("openai:gpt-4.1", None, None))
+    assert (model.reasoning_effort, model.max_tokens) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("settings", "message"),
+    [
+        (
+            ModelSettings("openai:gpt-5", "xhigh"),
+            "Модель openai:gpt-5 не поддерживает усилие 'xhigh': допустимо minimal, low, medium, high",
+        ),
+        (
+            ModelSettings("openai:gpt-4.1", "high", None),
+            "Модель openai:gpt-4.1 не поддерживает усилие 'high': оставьте усилие пустым",
+        ),
+        (
+            ModelSettings("openai:gpt-4.1", None, 64_000),
+            "max_tokens=64000 больше предела модели openai:gpt-4.1: 32768",
+        ),
+    ],
+    ids=["effort-level", "no-reasoning", "max-tokens"],
+)
+def test_chat_model_profile(keys, settings, message):
+    """Усилие и лимит сверяются с профилем модели LangChain"""
+    with pytest.raises(ValueError) as info:
+        chat_model(settings)
+    assert str(info.value) == message
+
+
 def test_chat_model_gemini(keys):
     model = chat_model(ModelSettings("google_genai:gemini-2.5-pro", "low", 8000))
     assert isinstance(model, ChatGoogleGenerativeAI)
@@ -101,9 +134,46 @@ def test_ask(reply, name):
 )
 def test_ask_fallback(partial, text):
     """После отказа Claude резервная модель начинает заново или продолжает частичный текст"""
-    reply = anthropic(text, model="claude-opus-5", partial=partial)
+    reply = anthropic(text, partial=partial)
     result = ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
-    assert result == Reply(ANSWER, "claude-opus-5", 120, 45)
+    assert result == Reply(ANSWER, "claude-opus-5-5", 120, 45)
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
+            "Ответ модели fake обрезан по лимиту токенов: увеличьте MAX_TOKENS в настройках",
+        ),
+        (
+            {"status": "incomplete", "incomplete_details": {"reason": "content_filter"}},
+            "Модель fake отказалась отвечать (причина: content_filter)",
+        ),
+        ({"status": "completed"}, "Ответ модели не соответствует схеме Answer"),
+        (None, "Ответ модели не соответствует схеме Answer"),
+        (ValueError, "Ответ модели не соответствует схеме Answer"),
+    ],
+    ids=["max-output-tokens", "content-filter", "completed", "no-response", "not-json"],
+)
+def test_ask_responses_api_error(body, message):
+    """В Responses API SDK OpenAI разбирает ответ сам; причину LangChain прикрепляет к ошибке"""
+    try:
+        Answer.model_validate_json('{"words": ["ко')
+    except ValidationError as error:
+        failure = error
+
+    def json():
+        if body is ValueError:
+            raise ValueError("не JSON")
+        return body
+
+    if body is not None:
+        failure.response = SimpleNamespace(json=json)
+    with pytest.raises(ModelError) as info:
+        ask(FakeChatModel(replies=[failure]), "", "Вопрос", Answer)
+    assert str(info.value) == message
+    assert info.value.__cause__ is failure
 
 
 def test_ask_string_blocks():

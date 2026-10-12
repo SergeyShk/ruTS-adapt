@@ -11,6 +11,7 @@ EFFORTS = {
     "google_genai": ("minimal", "low", "medium", "high"),
 }
 SWITCHES = {"1": True, "0": False}
+DEFAULT_MODEL = "anthropic:claude-opus-5-5"
 
 
 @dataclass(frozen=True)
@@ -21,21 +22,21 @@ class ModelSettings:
     Описание:
         Модель задается как провайдер:модель, как в init_chat_model LangChain;
         провайдеры - anthropic, openai, google_genai (Gemini). Усилие - уровень
-        рассуждения модели, у каждого провайдера свой набор; None - умолчание
-        провайдера, для моделей без рассуждения. В max_tokens входит и мышление
-        модели, а не только ответ
+        рассуждения модели, у каждого провайдера свой набор. В max_tokens входит
+        и мышление модели, а не только ответ. None - умолчание провайдера:
+        усилие high и лимит 64 000 подобраны для модели по умолчанию
 
     Атрибуты:
         model (str): Провайдер и модель
         effort (str | None): Усилие модели
-        max_tokens (int): Наибольшее число токенов ответа вместе с мышлением
+        max_tokens (int | None): Наибольшее число токенов ответа вместе с мышлением
         fallbacks (bool): Только для anthropic: при отказе повторить запрос
             на резервной модели, которую API выбирает по категории отказа
     """
 
-    model: str = "anthropic:claude-opus-5-5"
+    model: str = DEFAULT_MODEL
     effort: str | None = "high"
-    max_tokens: int = 64_000
+    max_tokens: int | None = 64_000
     fallbacks: bool = True
 
     @property
@@ -59,8 +60,8 @@ class Settings:
         по ним черновики. Настройка роли читается из переменной окружения
         RUTS_ADAPT_<РОЛЬ>_<НАСТРОЙКА> (RUTS_ADAPT_JUDGE_EFFORT), резервная модель
         для обеих ролей - из RUTS_ADAPT_FALLBACKS (1 или 0); если переменная
-        не задана, остается значение по умолчанию, пустое усилие - умолчание
-        провайдера
+        не задана, остается значение по умолчанию. Для модели не по умолчанию
+        усилие и лимит по умолчанию - умолчания провайдера, как и пустое усилие
 
     Атрибуты:
         writer (ModelSettings): Настройки писателя
@@ -90,6 +91,8 @@ class Settings:
             ... )
             >>> settings.writer.model, settings.judge.provider, settings.judge.effort
             ('anthropic:claude-opus-5-5', 'openai', 'medium')
+            >>> settings.writer.max_tokens, settings.judge.max_tokens
+            (64000, None)
         """
         environ = os_environ if environ is None else environ
         fallbacks = _switch(environ, "FALLBACKS", ModelSettings.fallbacks)
@@ -102,7 +105,9 @@ class Settings:
 def _model_settings(environ: Mapping[str, str], role: str, fallbacks: bool) -> ModelSettings:
     """Настройки роли из переменных RUTS_ADAPT_<РОЛЬ>_*"""
     variable = f"{ENV_PREFIX}{role}_MODEL"
-    model = environ.get(variable, ModelSettings.model)
+    model = environ.get(variable, DEFAULT_MODEL)
+    # Умолчания усилия и лимита подобраны для модели по умолчанию, а не для любой модели провайдера
+    defaults = ModelSettings() if model == DEFAULT_MODEL else ModelSettings(model, None, None)
     provider, _, name = model.partition(":")
     if provider not in EFFORTS or not name:
         raise ValueError(
@@ -110,7 +115,7 @@ def _model_settings(environ: Mapping[str, str], role: str, fallbacks: bool) -> M
             f"{', '.join(EFFORTS)}, получено {model!r}"
         )
     variable = f"{ENV_PREFIX}{role}_EFFORT"
-    effort = environ.get(variable, ModelSettings.effort) or None
+    effort = environ.get(variable, defaults.effort) or None
     if effort is not None and effort not in EFFORTS[provider]:
         raise ValueError(
             f"{variable} для {provider} должна быть одним из значений "
@@ -119,12 +124,12 @@ def _model_settings(environ: Mapping[str, str], role: str, fallbacks: bool) -> M
     return ModelSettings(
         model=model,
         effort=effort,
-        max_tokens=_positive_int(environ, f"{role}_MAX_TOKENS", ModelSettings.max_tokens),
+        max_tokens=_positive_int(environ, f"{role}_MAX_TOKENS", defaults.max_tokens),
         fallbacks=fallbacks,
     )
 
 
-def _positive_int(environ: Mapping[str, str], name: str, default: int) -> int:
+def _positive_int(environ: Mapping[str, str], name: str, default: int | None) -> int | None:
     """Целое положительное значение переменной или значение по умолчанию"""
     variable = ENV_PREFIX + name
     if variable not in environ:
