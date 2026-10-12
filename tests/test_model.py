@@ -112,17 +112,24 @@ def test_chat_model_gemini(keys):
 
 
 @pytest.mark.parametrize(
-    ("effort", "max_tokens", "reasoning"),
-    [("high", 8000, "high"), ("none", 8000, False), (None, None, None)],
+    ("effort", "max_tokens", "context", "reasoning"),
+    [("high", 8000, 32_768, "high"), ("none", 8000, None, False), (None, None, None, None)],
 )
-def test_chat_model_ollama(effort, max_tokens, reasoning):
-    """Локальной модели ключ не нужен; лимит - num_predict, none выключает рассуждение"""
-    model = chat_model(ModelSettings("ollama:qwen3:30b", effort, max_tokens))
+def test_chat_model_ollama(effort, max_tokens, context, reasoning):
+    """Локальной модели ключ не нужен; лимит - num_predict, окно - num_ctx"""
+    model = chat_model(ModelSettings("ollama:qwen3:30b", effort, max_tokens, context=context))
     assert isinstance(model, ChatOllama)
-    assert (model.model, model.num_predict, model.reasoning) == (
-        "qwen3:30b",
-        max_tokens,
-        reasoning,
+    assert (model.model, model.num_predict, model.num_ctx) == ("qwen3:30b", max_tokens, context)
+    assert model.reasoning == reasoning
+
+
+def test_chat_model_ollama_context():
+    """Ответ не может занять все окно контекста: запросу не останется места"""
+    with pytest.raises(ValueError) as info:
+        chat_model(ModelSettings("ollama:qwen3:30b", None, 32_768, context=32_768))
+    assert str(info.value) == (
+        "max_tokens=32768 не меньше окна контекста модели ollama:qwen3:30b: 32768, "
+        "для запроса места не останется"
     )
 
 

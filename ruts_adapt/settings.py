@@ -13,6 +13,7 @@ EFFORTS = {
 }
 SWITCHES = {"1": True, "0": False}
 DEFAULT_MODEL = "anthropic:claude-opus-5-5"
+DEFAULT_OLLAMA_CONTEXT = 32_768
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,10 @@ class ModelSettings:
         Модель задается как провайдер:модель, как в init_chat_model LangChain;
         провайдеры - anthropic, openai, google_genai (Gemini) и ollama (локальные
         открытые модели, ollama:qwen3:30b). Усилие - уровень рассуждения модели,
-        у каждого провайдера свой набор; у ollama none выключает рассуждение. В max_tokens входит
+        у каждого провайдера свой набор; у ollama none выключает рассуждение.
+        Окно контекста задается только локальной модели: запрос, мышление
+        и ответ должны в него поместиться, иначе Ollama молча обрезает запрос,
+        а ее собственное умолчание - несколько тысяч токенов. В max_tokens входит
         и мышление модели, а не только ответ. None - умолчание провайдера:
         усилие high и лимит 64 000 подобраны для модели по умолчанию
 
@@ -34,12 +38,14 @@ class ModelSettings:
         max_tokens (int | None): Наибольшее число токенов ответа вместе с мышлением
         fallbacks (bool): Только для anthropic: при отказе повторить запрос
             на резервной модели, которую API выбирает по категории отказа
+        context (int | None): Только для ollama: окно контекста в токенах
     """
 
     model: str = DEFAULT_MODEL
     effort: str | None = "high"
     max_tokens: int | None = 64_000
     fallbacks: bool = True
+    context: int | None = None
 
     @property
     def provider(self) -> str:
@@ -60,7 +66,8 @@ class Settings:
     Описание:
         Писатель переписывает текст, судья выписывает факты исходника и проверяет
         по ним черновики. Настройка роли читается из переменной окружения
-        RUTS_ADAPT_<РОЛЬ>_<НАСТРОЙКА> (RUTS_ADAPT_JUDGE_EFFORT), резервная модель
+        RUTS_ADAPT_<РОЛЬ>_<НАСТРОЙКА> (RUTS_ADAPT_JUDGE_EFFORT, у ollama еще
+        RUTS_ADAPT_<РОЛЬ>_CONTEXT, по умолчанию 32 768), резервная модель
         для обеих ролей - из RUTS_ADAPT_FALLBACKS (1 или 0); если переменная
         не задана, остается значение по умолчанию. Для модели не по умолчанию
         усилие и лимит по умолчанию - умолчания провайдера, как и пустое усилие
@@ -123,11 +130,16 @@ def _model_settings(environ: Mapping[str, str], role: str, fallbacks: bool) -> M
             f"{variable} для {provider} должна быть одним из значений "
             f"{', '.join(EFFORTS[provider])} или пустой, получено {effort!r}"
         )
+    variable = f"{ENV_PREFIX}{role}_CONTEXT"
+    if provider != "ollama" and variable in environ:
+        raise ValueError(f"{variable} задается только для ollama, модель {model!r}")
+    default_context = DEFAULT_OLLAMA_CONTEXT if provider == "ollama" else None
     return ModelSettings(
         model=model,
         effort=effort,
         max_tokens=_positive_int(environ, f"{role}_MAX_TOKENS", defaults.max_tokens),
         fallbacks=fallbacks,
+        context=_positive_int(environ, f"{role}_CONTEXT", default_context),
     )
 
 

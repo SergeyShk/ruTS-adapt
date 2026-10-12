@@ -67,7 +67,8 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         если он их знает. Ключ API модель берет из переменной окружения
         провайдера: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY; Ollama
         ключа не требует, адрес ее сервера - OLLAMA_HOST, по умолчанию
-        localhost:11434
+        localhost:11434. Окно контекста локальной модели задается в каждом
+        запросе и заменяет умолчание сервера OLLAMA_CONTEXT_LENGTH
 
     Аргументы:
         settings (ModelSettings): Провайдер, модель, усилие, max_tokens и резервная модель
@@ -76,11 +77,19 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         BaseChatModel: Модель чата
 
     Исключения:
-        ValueError: Если модель не поддерживает усилие или max_tokens больше ее предела
+        ValueError: Если модель не поддерживает усилие, max_tokens больше ее предела
+            или окна контекста
     """
     options: dict[str, Any] = {}
     if settings.provider == "ollama":
+        if settings.context is not None:
+            options["num_ctx"] = settings.context
         if settings.max_tokens is not None:
+            if settings.context is not None and settings.max_tokens >= settings.context:
+                raise ValueError(
+                    f"max_tokens={settings.max_tokens} не меньше окна контекста модели "
+                    f"{settings.model}: {settings.context}, для запроса места не останется"
+                )
             options["num_predict"] = settings.max_tokens
         if settings.effort is not None:
             options["reasoning"] = False if settings.effort == "none" else settings.effort

@@ -38,6 +38,19 @@ def test_ollama_model():
     assert (settings.writer.effort, settings.writer.max_tokens) == (None, None)
 
 
+def test_ollama_context():
+    """Окно контекста задается только локальной модели: умолчание сервера слишком мало"""
+    assert Settings().writer.context is None
+    settings = Settings.from_env(
+        {
+            "RUTS_ADAPT_WRITER_MODEL": "ollama:qwen3:30b",
+            "RUTS_ADAPT_JUDGE_MODEL": "ollama:gpt-oss:20b",
+            "RUTS_ADAPT_JUDGE_CONTEXT": "65536",
+        }
+    )
+    assert (settings.writer.context, settings.judge.context) == (32_768, 65_536)
+
+
 def test_effort_default():
     """Пустое усилие - умолчание провайдера, для моделей без рассуждения"""
     settings = Settings.from_env(
@@ -98,6 +111,14 @@ def test_from_os_environ(monkeypatch):
             "RUTS_ADAPT_WRITER_MAX_TOKENS должна быть целым положительным числом, получено '0'",
         ),
         ({"RUTS_ADAPT_JUDGE_MAX_TOKENS": "16k"}, "RUTS_ADAPT_JUDGE_MAX_TOKENS должна быть целым"),
+        (
+            {"RUTS_ADAPT_WRITER_CONTEXT": "8192"},
+            "RUTS_ADAPT_WRITER_CONTEXT задается только для ollama, модель 'anthropic:claude-opus-5-5'",
+        ),
+        (
+            {"RUTS_ADAPT_JUDGE_MODEL": "ollama:qwen3:30b", "RUTS_ADAPT_JUDGE_CONTEXT": "32k"},
+            "RUTS_ADAPT_JUDGE_CONTEXT должна быть целым положительным числом, получено '32k'",
+        ),
         (
             {"RUTS_ADAPT_FALLBACKS": "yes"},
             "RUTS_ADAPT_FALLBACKS должна быть 1 или 0, получено 'yes'",
