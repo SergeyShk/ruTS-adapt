@@ -2,6 +2,7 @@ import importlib
 import io
 import runpy
 import sys
+from importlib.metadata import version
 
 import pytest
 
@@ -13,7 +14,9 @@ def test_version(capsys):
     with pytest.raises(SystemExit) as info:
         main(["--version"])
     assert info.value.code == 0
-    assert capsys.readouterr().out == f"ruts-adapt {ruts_adapt.__version__}\n"
+    assert (
+        capsys.readouterr().out == f"ruts-adapt {ruts_adapt.__version__}, ruts {version('ruts')}\n"
+    )
 
 
 def test_no_arguments(capsys):
@@ -63,7 +66,9 @@ def test_module(monkeypatch, capsys):
     with pytest.raises(SystemExit) as info:
         runpy.run_module("ruts_adapt", run_name="__main__")
     assert info.value.code == 0
-    assert capsys.readouterr().out == f"ruts-adapt {ruts_adapt.__version__}\n"
+    assert (
+        capsys.readouterr().out == f"ruts-adapt {ruts_adapt.__version__}, ruts {version('ruts')}\n"
+    )
 
 
 def test_module_import(monkeypatch, capsys):
