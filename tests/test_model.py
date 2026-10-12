@@ -13,7 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ruts_adapt.model import FALLBACKS_BETA, ModelError, Reply, ask, chat_model
 from ruts_adapt.settings import ModelSettings
-from tests.fakes import FakeChatModel, anthropic, gemini, ollama, openai
+from tests.fakes import FakeChatModel, RepliesExhaustedError, anthropic, gemini, ollama, openai
 
 
 class Answer(BaseModel):
@@ -343,6 +343,12 @@ def test_ask_call_error():
     assert str(info.value) == "Модель fake не ответила: ConnectionError: connection refused"
     assert info.value.__cause__ is failure
     assert not info.value.retryable
+
+
+def test_fake_exhausted():
+    """Кончившиеся ответы поддельной модели роняют тест, а не превращаются в ошибку модели"""
+    with pytest.raises(RepliesExhaustedError):
+        ask(FakeChatModel(replies=[]), "", "Вопрос", Answer)
 
 
 def test_ask_no_usage():

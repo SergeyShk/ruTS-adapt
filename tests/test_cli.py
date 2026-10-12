@@ -321,6 +321,16 @@ def test_interrupted(capsys, models, stdin):
     assert fail(capsys, ["-g", "2"], code=130).startswith("Исходный текст")
 
 
+def test_interrupted_reading(capsys, monkeypatch):
+    """Ctrl+C до графа - пока команда читает текст - тоже код 130 без трейсбека"""
+
+    def interrupt(file):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_read", interrupt)
+    assert fail(capsys, ["-g", "2"], code=130) == ""
+
+
 def test_module(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["ruts_adapt", "--version"])
     monkeypatch.delitem(sys.modules, "ruts_adapt.__main__", raising=False)

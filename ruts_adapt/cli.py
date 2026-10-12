@@ -139,6 +139,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
     try:
+        _run(parser, args)
+    except KeyboardInterrupt:
+        sys.exit(INTERRUPTED)
+
+
+def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
+    """Чтение и проверка текста, создание моделей, адаптация и печать итога"""
+    try:
         settings = Settings.from_env()
         text = _read(args.file)
         check_russian(text)
@@ -152,8 +160,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         _fail(f"не удалось создать модель: {error}")
     try:
         result = adapt(text, args.grade, args.attempts, context, sys.stderr)
-    except KeyboardInterrupt:
-        sys.exit(INTERRUPTED)
     except ModelError as error:
         _fail(f"ошибка модели: {error}")
     print(result.text)
