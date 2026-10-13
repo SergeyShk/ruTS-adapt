@@ -1,15 +1,31 @@
+import os
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar, cast
 
 from langchain.chat_models import init_chat_model
+from langchain_core.exceptions import ContextOverflowError
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import ContentFilterFinishReasonError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
-from .settings import ModelSettings
+from .settings import DEFAULT_MAX_TOKENS, ModelSettings
 
 FALLBACKS_BETA = "server-side-fallback-2026-07-01"
+# Переменные ключа API провайдера: модель читает первую заданную
+KEYS = {
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "google_genai": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+}
+# Gemini через Vertex AI берет учетные данные Google Cloud, а не ключ
+VERTEX = "GOOGLE_GENAI_USE_VERTEXAI"
+# Секунды ожидания ответа: модели LangChain отключают умолчание SDK (10 минут) и ждут без конца
+TIMEOUT = 600
+# Локальная модель на процессоре отвечает дольше облачной
+OLLAMA_TIMEOUT = 1800
+# Ошибки посреди потока Claude: приходят со статусом 200, и SDK их не повторяет
+TRANSIENT_STREAM_ERRORS = {"overloaded_error", "api_error"}
 GEMINI_REFUSALS = {
     "SAFETY",
     "RECITATION",
@@ -24,10 +40,11 @@ GEMINI_REFUSALS = {
 T = TypeVar("T")
 U = TypeVar("U")
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
-Stop = Literal["done", "refused", "truncated", "other"]
+Stop = Literal["done", "refused", "truncated", "overflow", "other"]
 _REFUSED = "Модель {name} отказалась отвечать (причина: {detail})"
 _MISMATCH = "Ответ модели не соответствует схеме {schema}"
 _TRUNCATED = "Ответ модели {name} обрезан по лимиту токенов: увеличьте MAX_TOKENS в настройках"
+_OVERFLOW = "Текст не помещается в окно контекста модели {name}: сократите его"
 
 
 class ModelError(Exception):
@@ -35,8 +52,9 @@ class ModelError(Exception):
     Ответ модели, который нельзя использовать: отказ, обрезанный или не по схеме
 
     Атрибуты:
-        retryable (bool): Повтор того же запроса может помочь - ответ не по схеме
-            или неожиданная остановка; отказ и обрезка повторятся снова
+        retryable (bool): Повтор того же запроса может помочь - ответ не по схеме,
+            неожиданная остановка, перегрузка или сбой сервера, сеть, таймаут;
+            отказ, обрезка, переполнение окна контекста и неверный ключ повторятся снова
     """
 
     def __init__(self, message: str, retryable: bool = False) -> None:
@@ -75,11 +93,15 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         Ответ Claude приходит потоком: SDK Anthropic не отправляет без потока
         запрос, который может идти дольше 10 минут, а большой max_tokens
         считается таким. Усилие и лимит сверяются с профилем модели LangChain,
-        если он их знает. Ключ API модель берет из переменной окружения
-        провайдера: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY; Ollama
-        ключа не требует, адрес ее сервера - OLLAMA_HOST, по умолчанию
-        localhost:11434. Окно контекста локальной модели задается в каждом
-        запросе и заменяет умолчание сервера OLLAMA_CONTEXT_LENGTH
+        если он их знает: модель Claude или Gemini с профилем без уровней
+        усилия усилия не принимает. Модели Claude без профиля и без MAX_TOKENS
+        получают лимит модели по умолчанию, а не 4096 токенов LangChain. Ключ
+        API модель берет из переменной окружения провайдера (KEYS), Gemini через
+        Vertex AI (VERTEX) - учетные данные Google Cloud; Ollama ключа не требует,
+        адрес ее сервера - OLLAMA_HOST, по умолчанию localhost:11434. Окно
+        контекста локальной модели задается в каждом запросе и заменяет
+        умолчание сервера OLLAMA_CONTEXT_LENGTH. Ответ ждется не дольше TIMEOUT
+        секунд, у Ollama - OLLAMA_TIMEOUT
 
     Аргументы:
         settings (ModelSettings): Провайдер, модель, усилие, max_tokens и резервная модель
@@ -88,11 +110,22 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         BaseChatModel: Модель чата
 
     Исключения:
-        ValueError: Если модель не поддерживает усилие, max_tokens больше ее предела
-            или окна контекста
+        ValueError: Если не задан ключ API провайдера, модель не поддерживает
+            ответ по схеме или усилие, max_tokens больше ее предела или окна контекста
     """
+    keys = KEYS.get(settings.provider, ())
+    vertex = settings.provider == "google_genai" and os.environ.get(VERTEX, "").lower() in (
+        "1",
+        "true",
+    )
+    if keys and not vertex and not any(os.environ.get(key) for key in keys):
+        raise ValueError(
+            f"Нет ключа API для модели {settings.model}: задайте переменную окружения "
+            + " или ".join(keys)
+        )
     options: dict[str, Any] = {}
     if settings.provider == "ollama":
+        options["client_kwargs"] = {"timeout": OLLAMA_TIMEOUT}
         if settings.context is not None:
             options["num_ctx"] = settings.context
         if settings.max_tokens is not None:
@@ -105,6 +138,7 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         if settings.effort is not None:
             options["reasoning"] = False if settings.effort == "none" else settings.effort
     else:
+        options["timeout"] = TIMEOUT
         if settings.max_tokens is not None:
             options["max_tokens"] = settings.max_tokens
         if settings.effort is not None:
@@ -117,9 +151,15 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         settings.name, model_provider=settings.provider, **options
     )
     profile = model.profile or {}
+    # Только OpenAI подменяет схему вызовом инструмента; у Claude профили LangChain
+    # помечают structured_output = false и модели, которые схему принимают
+    if settings.provider == "openai" and profile.get("structured_output") is False:
+        raise ValueError(f"Модель {settings.model} не поддерживает ответ по JSON-схеме")
     levels = profile.get("reasoning_effort_levels")
+    # У o-моделей OpenAI в профиле нет уровней, хотя усилие они принимают
     if settings.effort is not None and (
         (levels is not None and settings.effort not in levels)
+        or (profile and levels is None and settings.provider != "openai")
         or profile.get("reasoning_output") is False
     ):
         allowed = f"допустимо {', '.join(levels)}" if levels else "оставьте усилие пустым"
@@ -131,6 +171,8 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         raise ValueError(
             f"max_tokens={settings.max_tokens} больше предела модели {settings.model}: {limit}"
         )
+    if settings.provider == "anthropic" and settings.max_tokens is None and limit is None:
+        model = model.model_copy(update={"max_tokens": DEFAULT_MAX_TOKENS})
     return model
 
 
@@ -154,8 +196,9 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
 
     Исключения:
         ModelError: Если модель отказалась отвечать, ответ обрезан по лимиту
-            токенов, остановился по другой причине, не соответствует схеме
-            или вызов модели не удался (ключ, лимиты, сеть)
+            токенов, текст не поместился в окно контекста, ответ остановился
+            по другой причине, не соответствует схеме или вызов модели не удался
+            (ключ, лимиты, сеть); временные сбои - с retryable
     """
     structured = model.with_structured_output(schema, method="json_schema", include_raw=True)
     name = _model_name(model)
@@ -174,9 +217,13 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
         if reason == "content_filter":
             raise ModelError(_REFUSED.format(name=name, detail=reason)) from error
         raise ModelError(_MISMATCH.format(schema=schema.__name__), retryable=True) from error
+    except ContextOverflowError as error:
+        raise ModelError(_OVERFLOW.format(name=name)) from error
     except Exception as error:
-        # Ключ, лимиты, сеть: SDK провайдера уже повторил запрос, повтор узла не поможет
-        raise ModelError(f"Модель {name} не ответила: {type(error).__name__}: {error}") from error
+        raise ModelError(
+            f"Модель {name} не ответила: {type(error).__name__}: {error}",
+            retryable=_transient(error),
+        ) from error
     raw: AIMessage = cast(dict[str, Any], result)["raw"]
     name = raw.response_metadata.get("model_name") or name
     stop, detail = _stop(raw)
@@ -184,6 +231,8 @@ def ask(model: BaseChatModel, system: str, prompt: str, schema: type[SchemaT]) -
         raise ModelError(_REFUSED.format(name=name, detail=detail or "не указана"))
     if stop == "truncated":
         raise ModelError(_TRUNCATED.format(name=name))
+    if stop == "overflow":
+        raise ModelError(_OVERFLOW.format(name=name))
     if stop == "other":
         raise ModelError(
             f"Модель {name} остановилась по неожиданной причине: {detail}", retryable=True
@@ -217,6 +266,8 @@ def _anthropic_stop(metadata: dict[str, Any]) -> tuple[Stop, str | None]:
         return "refused", (metadata.get("stop_details") or {}).get("category")
     if reason == "max_tokens":
         return "truncated", reason
+    if reason == "model_context_window_exceeded":
+        return "overflow", reason
     return "other", reason
 
 
@@ -312,6 +363,25 @@ def _incomplete_reason(error: Exception) -> str | None:
         return None
     reason = (body.get("incomplete_details") or {}).get("reason")
     return reason if isinstance(reason, str) else None
+
+
+def _transient(error: Exception) -> bool:
+    """
+    Временный сбой вызова: перегрузка или сбой сервера, лимит запросов, сеть, таймаут
+
+    Описание:
+        Ошибки провайдеров LangChain сам отмечает is_retryable; SDK их уже
+        повторил, но повтор узла позже может помочь. Ошибка посреди потока
+        Claude приходит со статусом 200 и без такой отметки
+    """
+    if getattr(error, "is_retryable", False) or isinstance(error, (ConnectionError, TimeoutError)):
+        return True
+    body = getattr(error, "body", None)
+    return (
+        getattr(error, "status_code", None) == 200
+        and isinstance(body, dict)
+        and (body.get("error") or {}).get("type") in TRANSIENT_STREAM_ERRORS
+    )
 
 
 def _model_name(model: BaseChatModel) -> str:

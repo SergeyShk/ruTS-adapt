@@ -78,6 +78,20 @@ def test_efforts(provider, effort):
     assert Settings.from_env(environ).writer.effort == effort
 
 
+def test_strip():
+    """Пробелы по краям значений не меняют смысла: модель по умолчанию остается ею"""
+    settings = Settings.from_env(
+        {
+            "RUTS_ADAPT_WRITER_MODEL": "anthropic:claude-opus-5-5 ",
+            "RUTS_ADAPT_JUDGE_EFFORT": " medium",
+            "RUTS_ADAPT_FALLBACKS": "0\n",
+        }
+    )
+    assert (settings.writer.effort, settings.writer.max_tokens) == ("high", 64_000)
+    assert settings.judge.effort == "medium"
+    assert settings.writer.fallbacks is False
+
+
 def test_from_os_environ(monkeypatch):
     monkeypatch.setenv("RUTS_ADAPT_WRITER_EFFORT", "low")
     assert Settings.from_env().writer.effort == "low"

@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from ruts_adapt.attempts import Attempt, Outcome, Result, best, candidate, critique, mtld_drop
-from ruts_adapt.measure import Target, measure
+from ruts_adapt.measure import Target, measure, number
 from ruts_adapt.tasks import FactCheck, FactStatus
 from tests.samples import DECREE, FACTS, KEPT, MEDIUM, SIMPLE, verdict
 
@@ -12,6 +12,12 @@ TARGET = Target.from_grade(2)
 SIMPLE_M = measure(SIMPLE)
 TERMS = "Хлоропласты синтезируют углеводы. Фотосинтез преобразует электромагнитную энергию."
 PLAIN = "Кот спит на теплом окне, а пес лежит у двери и ждет нас."
+# Одно предложение в 44 слова из коротких слов: сводный класс 4.5
+CHAIN = (
+    "Жил-был кот, и он все дни спал у печки, а по ночам он шел в сад и там ловил мышей, "
+    "и все в доме его любили и звали Васей, а он мурлыкал и ел из миски суп и кашу, "
+    "и так шли его дни."
+)
 
 
 def attempt(number=1, text=SIMPLE, checks=KEPT.checks, gap=None):
@@ -84,12 +90,12 @@ def test_critique_too_complex():
     current = attempt(text=MEDIUM, checks=KEPT.checks)
     text = critique(current, [current], measure(DECREE), TARGET, FACTS)
     assert text.splitlines() == [
-        "Попытка 1 читается как «аспирантура (старше 22 лет)» (сводный класс 25.5), "
-        "цель - «1-3-й класс (6-8 лет)»: текст сложнее цели на 22.5 класса.",
-        "Сейчас в среднем 13.0 слова в предложении (в исходном 18.0), 4.00 слога и 9.08 буквы "
-        "в слове (3.61 и 8.33), 46% слов от пяти слогов (50%).",
-        "В текстах для этого уровня обычно 7-10 слов в предложении, 4.7 буквы в слове "
-        "и не больше 2% слов от пяти слогов.",
+        "Попытка 1 читается как «аспирантура (старше 22 лет)» (сводный класс 25,5), "
+        "цель - «1-3-й класс (6-8 лет)»: текст сложнее цели на 22,5 класса.",
+        "Сейчас в среднем 13,0 слова в предложении (в исходном 18,0), 4,00 слога и 9,08 буквы "
+        "в слове (3,61 и 8,33), 46% слов от пяти слогов (50%).",
+        "В текстах для этого уровня обычно 7,2-10,0 слова в предложении, 4,7 буквы в слове "
+        "и не больше 1,5% слов от пяти слогов.",
         "Делите длинные предложения и заменяйте длинные и многосложные слова короткими.",
     ]
 
@@ -106,12 +112,48 @@ def test_critique_short_sentences_complex():
     )
 
 
+def test_critique_short_words_complex():
+    """Сложный текст из коротких слов: делить предложения, а слова не трогать"""
+    current = attempt(text=CHAIN)
+    assert current.gap > 0
+    text = critique(current, [current], measure(DECREE), TARGET, FACTS)
+    assert text.splitlines()[-1] == (
+        "Слова уже не длиннее, чем в текстах этого уровня: делите длинные предложения."
+    )
+
+
+@pytest.mark.parametrize(
+    ("grade", "text", "advice"),
+    [
+        (
+            8,
+            TERMS,
+            "Предложения уже короткие: не дробите их дальше, "
+            "а заменяйте длинные слова и термины короткими и простыми.",
+        ),
+        (
+            10,
+            CHAIN,
+            "Предложения уже длинные: не объединяйте их дальше, "
+            "а используйте более точные и длинные слова.",
+        ),
+    ],
+    ids=["simplify-short", "complicate-long"],
+)
+def test_critique_no_norm(grade, text, advice):
+    """Ступень без норм: совет смотрит на крайние длины предложения, а не только на направление"""
+    target = Target.from_grade(grade)
+    current = attempt(text=text, gap=target.gap(measure(text).grade))
+    critique_text = critique(current, [current], measure(DECREE), target, FACTS)
+    assert critique_text.splitlines()[-1] == advice
+
+
 def test_critique_overshoot():
     """Текст усложняли и перескочили цель: просто сложнее цели, а не «все еще»"""
     target = Target.from_grade(5)
     current = attempt(text=MEDIUM, gap=target.gap(measure(MEDIUM).grade))
     text = critique(current, [current], measure(SIMPLE), target, FACTS)
-    assert "текст сложнее цели на 19.5 класса." in text
+    assert "текст сложнее цели на 19,5 класса." in text
     assert "все еще" not in text
 
 
@@ -119,7 +161,7 @@ def test_critique_too_simple():
     target = Target.from_grade(10)
     current = attempt(gap=target.gap(measure(SIMPLE).grade))
     text = critique(current, [current], measure(DECREE), target, FACTS)
-    assert "текст проще цели на 9.0 класса" in text
+    assert "текст проще цели на 9,0 класса" in text
     assert "В текстах для этого уровня" not in text
     assert text.endswith(
         "Объединяйте короткие предложения и используйте более точные и длинные слова."
@@ -159,23 +201,23 @@ def between(grade):
 
 
 def test_critique_between():
-    """Ступень без норм, попытки по обе стороны: признаки между ближайшими и история попыток"""
+    """Ступень без норм, попытки по обе стороны: признаки между ближайшими вместо совета"""
     lines = between(8).splitlines()
     # Середина ступени 7-9 - класс 8: доля пути от попытки 3 (1.0) к попытке 1 (25.5)
     share = (8 - 1.0) / (25.5 - 1.0)
     words = SIMPLE_M.words_per_sent + share * (13.0 - SIMPLE_M.words_per_sent)
     letters = SIMPLE_M.letters_per_word + share * (9.08 - SIMPLE_M.letters_per_word)
-    assert lines[3] == (
+    assert lines[2] == (
         "Попытка 1 сложнее цели, попытка 3 проще: нужен текст между ними, "
-        f"около {words:.0f} слов в предложении и {letters:.1f} буквы в слове."
+        f"около {number(words, 0)} слов в предложении и {number(letters)} буквы в слове."
     )
-    assert lines[4:] == [
+    assert lines[3:] == [
         "Все попытки:",
-        "2. Сводный класс 26.5: 18.0 слова в предложении, 8.33 буквы в слове, "
+        "2. Сводный класс 26,5: 18,0 слова в предложении, 8,33 буквы в слове, "
         "50% слов от пяти слогов",
-        "1. Сводный класс 25.5: 13.0 слова в предложении, 9.08 буквы в слове, "
+        "1. Сводный класс 25,5: 13,0 слова в предложении, 9,08 буквы в слове, "
         "46% слов от пяти слогов",
-        "3. Сводный класс 1.0: 4.3 слова в предложении, 5.23 буквы в слове, "
+        "3. Сводный класс 1,0: 4,3 слова в предложении, 5,23 буквы в слове, "
         "0% слов от пяти слогов",
     ]
 
@@ -183,7 +225,7 @@ def test_critique_between():
 def test_critique_between_norm():
     """Ступень с нормами: ориентир - нормы, признаков между попытками нет, история есть"""
     text = between(5)
-    assert "В текстах для этого уровня обычно 9-13 слов" in text
+    assert "В текстах для этого уровня обычно 9,4-12,8 слова" in text
     assert "между ними" not in text
     assert "Все попытки:" in text
 
@@ -197,7 +239,7 @@ def test_critique_facts():
     current = attempt(2, checks=checks)
     text = critique(current, [current], measure(DECREE), TARGET, FACTS)
     assert text.splitlines() == [
-        "Попытка 2 читается как «1-3-й класс (6-8 лет)» (сводный класс 1.0), "
+        "Попытка 2 читается как «1-3-й класс (6-8 лет)» (сводный класс 1,0), "
         "цель - «1-3-й класс (6-8 лет)»: уровень достигнут, сохраните его.",
         "Искажены факты, верните их точный смысл:",
         "1. Постановление устанавливает порядок субсидий - в черновике: «правила о налогах»",

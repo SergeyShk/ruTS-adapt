@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from google.genai.types import BlockedReason
 from langchain_anthropic import ChatAnthropic
+from langchain_core.exceptions import ContextOverflowError, ModelAPIError
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
@@ -11,7 +12,15 @@ from openai import ContentFilterFinishReasonError, LengthFinishReasonError
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel, ValidationError
 
-from ruts_adapt.model import FALLBACKS_BETA, ModelError, Reply, ask, chat_model
+from ruts_adapt.model import (
+    FALLBACKS_BETA,
+    OLLAMA_TIMEOUT,
+    TIMEOUT,
+    ModelError,
+    Reply,
+    ask,
+    chat_model,
+)
 from ruts_adapt.settings import ModelSettings
 from tests.fakes import FakeChatModel, RepliesExhaustedError, anthropic, gemini, ollama, openai
 
@@ -41,6 +50,59 @@ def test_chat_model_anthropic(keys):
     assert model.streaming is True
     assert model.betas == [FALLBACKS_BETA]
     assert model.model_kwargs == {"fallbacks": "default"}
+    assert model.default_request_timeout == TIMEOUT
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        ModelSettings("anthropic:claude-sonnet-4-5-20250929", None, 32_000),
+        ModelSettings("openai:o3", "high", None),
+    ],
+    ids=["claude-dated", "openai-o3"],
+)
+def test_chat_model_profile_gaps(keys, settings):
+    """Пробелы в профилях LangChain не отклоняют рабочие модели: датированный Claude, o-модели"""
+    assert chat_model(settings).profile is not None
+
+
+def test_chat_model_vertex(monkeypatch):
+    """Gemini через Vertex AI ключа API не требует"""
+    for variable in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test")
+    model = chat_model(ModelSettings("google_genai:gemini-3.1-pro", None, None))
+    assert isinstance(model, ChatGoogleGenerativeAI)
+
+
+def test_chat_model_anthropic_no_profile(keys):
+    """Claude без профиля LangChain получает лимит модели по умолчанию, а не 4096 токенов"""
+    model = chat_model(ModelSettings("anthropic:claude-haiku-5-5", None, None))
+    assert model.max_tokens == 64_000
+
+
+@pytest.mark.parametrize(
+    ("variables", "message"),
+    [
+        ((), "задайте переменную окружения GOOGLE_API_KEY или GEMINI_API_KEY"),
+        (("GEMINI_API_KEY",), None),
+    ],
+    ids=["missing", "gemini-key"],
+)
+def test_chat_model_key(monkeypatch, variables, message):
+    """Ключ провайдера проверяется до создания модели: ошибка сразу, а не на первом вызове"""
+    for variable in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+    for variable in variables:
+        monkeypatch.setenv(variable, "test")
+    settings = ModelSettings("google_genai:gemini-3.1-pro", None, None)
+    if message is None:
+        assert isinstance(chat_model(settings), ChatGoogleGenerativeAI)
+        return
+    with pytest.raises(ValueError) as info:
+        chat_model(settings)
+    assert str(info.value) == f"Нет ключа API для модели google_genai:gemini-3.1-pro: {message}"
 
 
 def test_chat_model_anthropic_options(keys):
@@ -67,6 +129,7 @@ def test_chat_model_openai(keys):
     )
     assert model.streaming is False
     assert model.model_kwargs == {}
+    assert model.request_timeout == TIMEOUT
 
 
 def test_chat_model_provider_defaults(keys):
@@ -90,8 +153,17 @@ def test_chat_model_provider_defaults(keys):
             ModelSettings("openai:gpt-4.1", None, 64_000),
             "max_tokens=64000 больше предела модели openai:gpt-4.1: 32768",
         ),
+        (
+            ModelSettings("google_genai:gemini-2.5-pro", "low", None),
+            "Модель google_genai:gemini-2.5-pro не поддерживает усилие 'low': "
+            "оставьте усилие пустым",
+        ),
+        (
+            ModelSettings("openai:gpt-4", None, None),
+            "Модель openai:gpt-4 не поддерживает ответ по JSON-схеме",
+        ),
     ],
-    ids=["effort-level", "no-reasoning", "max-tokens"],
+    ids=["effort-level", "no-reasoning", "max-tokens", "no-effort-levels", "no-structured"],
 )
 def test_chat_model_profile(keys, settings, message):
     """Усилие и лимит сверяются с профилем модели LangChain"""
@@ -101,14 +173,15 @@ def test_chat_model_profile(keys, settings, message):
 
 
 def test_chat_model_gemini(keys):
-    model = chat_model(ModelSettings("google_genai:gemini-2.5-pro", "low", 8000))
+    model = chat_model(ModelSettings("google_genai:gemini-3.1-pro", "low", 8000))
     assert isinstance(model, ChatGoogleGenerativeAI)
     assert (model.model, model.max_output_tokens, model.reasoning_effort) == (
-        "gemini-2.5-pro",
+        "gemini-3.1-pro",
         8000,
         "low",
     )
     assert not model.streaming
+    assert model.timeout == TIMEOUT
 
 
 @pytest.mark.parametrize(
@@ -121,6 +194,7 @@ def test_chat_model_ollama(effort, max_tokens, context, reasoning):
     assert isinstance(model, ChatOllama)
     assert (model.model, model.num_predict, model.num_ctx) == ("qwen3:30b", max_tokens, context)
     assert model.reasoning == reasoning
+    assert model.client_kwargs == {"timeout": OLLAMA_TIMEOUT}
 
 
 def test_chat_model_ollama_context():
@@ -335,13 +409,51 @@ def test_schema_mismatch(reply):
     assert info.value.retryable
 
 
-def test_ask_call_error():
-    """Ошибка вызова провайдера - ключ, лимиты, сеть - становится ошибкой модели без повтора"""
-    failure = ConnectionError("connection refused")
+class StreamError(Exception):
+    """Ошибка посреди потока Claude, как ее бросает SDK Anthropic: статус 200, тип в теле"""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.status_code = 200
+        self.body = {"type": "error", "error": {"type": kind, "message": kind}}
+
+
+@pytest.mark.parametrize(
+    ("failure", "retryable"),
+    [
+        (PermissionError("invalid x-api-key"), False),
+        (ValueError("bad request"), False),
+        (StreamError("invalid_request_error"), False),
+        (ConnectionError("connection refused"), True),
+        (TimeoutError("timed out"), True),
+        (ModelAPIError("overloaded"), True),
+        (StreamError("overloaded_error"), True),
+    ],
+    ids=["key", "request", "stream-request", "network", "timeout", "server", "stream-overloaded"],
+)
+def test_ask_call_error(failure, retryable):
+    """Ошибка вызова - ошибка модели; временные сбои повторяемы, ключ и запрос - нет"""
     with pytest.raises(ModelError) as info:
         ask(FakeChatModel(replies=[failure]), "", "Вопрос", Answer)
-    assert str(info.value) == "Модель fake не ответила: ConnectionError: connection refused"
+    assert str(info.value).startswith(f"Модель fake не ответила: {type(failure).__name__}: ")
     assert info.value.__cause__ is failure
+    assert info.value.retryable is retryable
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        ContextOverflowError("prompt is too long"),
+        anthropic(stop_reason="model_context_window_exceeded"),
+    ],
+    ids=["request", "stop"],
+)
+def test_ask_context_overflow(reply):
+    """Текст не помещается в окно контекста: ошибка без повтора, повтор упрется снова"""
+    with pytest.raises(ModelError) as info:
+        ask(FakeChatModel(replies=[reply]), "", "Вопрос", Answer)
+    name = "claude-opus-5-5" if isinstance(reply, AIMessage) else "fake"
+    assert str(info.value) == f"Текст не помещается в окно контекста модели {name}: сократите его"
     assert not info.value.retryable
 
 

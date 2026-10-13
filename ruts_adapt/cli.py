@@ -1,4 +1,5 @@
 import argparse
+import errno
 import io
 import os
 import re
@@ -7,7 +8,7 @@ import sqlite3
 import sys
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from importlib.metadata import version
 from pathlib import Path
 from types import FrameType
@@ -17,17 +18,20 @@ from langchain_core.callbacks import get_usage_metadata_callback
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, StateSnapshot
+from pydantic import ValidationError
 
 from . import __version__
-from .attempts import Result
-from .checkpoint import STATE_VERSION, checkpointer
+from .attempts import Outcome, Result
+from .checkpoint import STATE_VERSION, ThreadBusyError, checkpointer, prune, thread_lock
 from .graph import Context, State, build_graph
 from .language import check_russian
-from .measure import MAX_GRADE, MIN_GRADE, Target
+from .measure import MAX_GRADE, MIN_GRADE, Target, measure
 from .model import ModelError, chat_model
 from .report import Reporter
 from .settings import Settings
 
+NOT_ACCEPTED = 3
+PAUSED = 4
 INTERRUPTED = 130
 MAX_ATTEMPTS = 10
 DEFAULT_ATTEMPTS = 3
@@ -97,9 +101,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         к классу читателя и печатает итоговый текст в stdout, а ход работы, таблицу
         попыток и итог - в stderr. Состояние потока сохраняется после каждого шага:
         --thread продолжает поток после остановки или передает решение по кандидату
-        на итог, если поток запущен с --review. Неверные аргументы, настройки
-        и входной текст завершают команду с кодом 2, ошибки модели - с кодом 1,
-        Ctrl+C - с кодом 130 без трейсбека, не дожидаясь ответа модели
+        на итог, если поток запущен с --review. Код 0 - текст на уровне цели,
+        NOT_ACCEPTED - лучшая попытка не прошла проверку (текст все равно
+        в stdout), PAUSED - кандидат ждет решения; неверные аргументы, настройки,
+        входной текст и занятый другим процессом поток - код 2, ошибки модели -
+        код 1, Ctrl+C - код 130 без трейсбека, не дожидаясь ответа модели
 
     Аргументы:
         argv (list[str]): Аргументы командной строки; None - sys.argv
@@ -108,9 +114,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(errors="replace")
-    # Итоговый текст в файл или канал - в UTF-8, как и вход, а не в кодировке консоли Windows
-    if isinstance(sys.stdout, io.TextIOWrapper) and not sys.stdout.isatty():
-        sys.stdout.reconfigure(encoding="utf-8")
+            # В файл или канал - в UTF-8, как и вход, а не в кодировке консоли Windows
+            if not stream.isatty():
+                stream.reconfigure(encoding="utf-8")
     parser = ArgumentParser(
         prog="ruts-adapt",
         usage="%(prog)s [-h] -g КЛАСС [-n N] [-r] [-t ПОТОК] [ФАЙЛ]\n"
@@ -124,7 +130,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         "ollama), по умолчанию anthropic:claude-opus-5-5; усилие и лимит ответа - "
         "RUTS_ADAPT_<WRITER|JUDGE>_EFFORT и _MAX_TOKENS, окно контекста локальной модели - "
         "_CONTEXT, каталог данных с потоками - RUTS_ADAPT_DATA_DIR. Ключи API - переменные "
-        "провайдеров: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY",
+        "провайдеров: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY. Коды возврата: 0 - текст "
+        f"на уровне цели, {NOT_ACCEPTED} - лучшая попытка не прошла проверку (текст все равно "
+        f"в stdout), {PAUSED} - кандидат ждет решения, 1 - ошибка модели, 2 - неверные "
+        "аргументы, настройки или текст, 130 - Ctrl+C",
     )
     parser.arguments.add_argument(
         "file",
@@ -181,6 +190,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         _run(parser, args)
     except KeyboardInterrupt:
         sys.exit(INTERRUPTED)
+    except BrokenPipeError:
+        # Канал закрыт читателем (| head): остаток вывода никому не нужен, трейсбек тоже
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        for stream in (sys.stdout, sys.stderr):
+            os.dup2(devnull, stream.fileno())
+        sys.exit(1)
 
 
 def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
@@ -196,38 +211,57 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
         parser.error(str(error))
     # Без --thread поток новый: аргументы и текст проверяются до открытия хранилища
     started = _start(parser, args) if args.thread is None else None
+    thread = args.thread or uuid.uuid4().hex[:8]
+    config: RunnableConfig = {"configurable": {"thread_id": thread}}
     with ExitStack() as stack:
-        thread = args.thread or uuid.uuid4().hex[:8]
-        config: RunnableConfig = {"configurable": {"thread_id": thread}}
         try:
-            graph = build_graph(checkpointer=stack.enter_context(checkpointer(settings.data_dir)))
-            snapshot = graph.get_state(config)
+            stack.enter_context(thread_lock(settings.data_dir, thread))
+            saver = stack.enter_context(checkpointer(settings.data_dir))
+        except ThreadBusyError as error:
+            parser.error(str(error))
         except (OSError, sqlite3.Error) as error:
             parser.error(f"не удалось открыть хранилище потоков в {settings.data_dir}: {error}")
+        graph = build_graph(checkpointer=saver)
+        try:
+            snapshot = graph.get_state(config)
+        except sqlite3.Error as error:
+            parser.error(f"не удалось открыть хранилище потоков в {settings.data_dir}: {error}")
+        except (ValueError, TypeError):
+            parser.error(f"поток {thread} поврежден: начните новый поток с другим именем")
         graph_input: State | Command[Any] | None
         values: Mapping[str, Any]
         if snapshot.values:
-            graph_input = _resume(parser, args, thread, snapshot)
-            if not snapshot.next:
-                print(snapshot.values["result"].text)
-                print(f"Поток {thread} уже завершен", file=sys.stderr)
-                return
+            _check_saved(parser, args, thread, snapshot)
             values = snapshot.values
+            if not snapshot.next:
+                print(f"Поток {thread} уже завершен", file=sys.stderr)
+                _exit_with(values["result"])
+            if snapshot.interrupts and not decided:
+                reporter = Reporter(values["target"], values["max_attempts"], sys.stderr)
+                reporter.restore(values)
+                reporter.pause(thread, snapshot.interrupts[0].value)
+                sys.exit(PAUSED)
+            graph_input = Command(resume={"feedback": args.reject}) if decided else None
         else:
-            if decided:
-                parser.error(f"поток {thread} не найден")
+            if decided or args.grade is None:
+                parser.error(
+                    f"поток {thread} не найден в {settings.data_dir}"
+                    + ("" if decided else "; новый поток - с -g КЛАСС")
+                )
             started = started or _start(parser, args)
+            graph_input, values = started, started
+        # Модели не нужны принятому кандидату и тексту уже на уровне цели: граф идет к итогу
+        on_level = (
+            not snapshot.values and values["target"].gap(measure(values["source"]).grade) == 0
+        )
+        context = None if args.approve or on_level else _context(parser, settings)
+        if snapshot.values:
+            print(f"Продолжаем поток {thread}", file=sys.stderr)
+        else:
             print(
                 f"Поток {thread}: продолжить после остановки - ruts-adapt --thread {thread}",
                 file=sys.stderr,
             )
-            graph_input, values = started, started
-        try:
-            context = Context(writer=chat_model(settings.writer), judge=chat_model(settings.judge))
-        except ValueError as error:
-            parser.error(str(error))
-        except Exception as error:
-            _fail(f"не удалось создать модель: {error}")
         reporter = Reporter(values["target"], values["max_attempts"], sys.stderr)
         reporter.restore(values)
         try:
@@ -236,8 +270,38 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
             _fail(f"ошибка модели: {error}. Продолжить: ruts-adapt --thread {thread}")
         except sqlite3.Error as error:
             _fail(f"не удалось сохранить поток в {settings.data_dir}: {error}")
-    if result is not None:
-        print(result.text)
+        # Неудавшаяся чистка не мешает итогу: старые чекпоинты удалит следующий запуск
+        with suppress(sqlite3.Error):
+            prune(saver, thread)
+    if result is None:
+        sys.exit(PAUSED)
+    _exit_with(result)
+
+
+def _context(parser: ArgumentParser, settings: Settings) -> Context:
+    """Модели писателя и судьи; ошибка настроек или ключа - до первого шага потока"""
+    try:
+        return Context(writer=chat_model(settings.writer), judge=chat_model(settings.judge))
+    except ValidationError as error:
+        reasons = "; ".join(str(item["msg"]) for item in error.errors())
+        parser.error(f"не удалось создать модель: {reasons}")
+    except ValueError as error:
+        parser.error(str(error))
+    except Exception as error:
+        _fail(f"не удалось создать модель: {error}")
+
+
+def _exit_with(result: Result) -> NoReturn:
+    """Итоговый текст в stdout и код: 0 - на уровне цели, NOT_ACCEPTED - лучшая непринятая"""
+    # Сбросить буфер здесь: при выходе интерпретатора закрытый канал дал бы код 120
+    try:
+        print(result.text.rstrip("\n"), flush=True)
+    except OSError as error:
+        # Закрытый канал на Windows - EINVAL, а не EPIPE
+        if error.errno != errno.EINVAL:
+            raise
+        raise BrokenPipeError(errno.EPIPE, "канал закрыт") from error
+    sys.exit(NOT_ACCEPTED if result.outcome is Outcome.BEST else 0)
 
 
 def _start(parser: ArgumentParser, args: argparse.Namespace) -> State:
@@ -258,17 +322,15 @@ def _start(parser: ArgumentParser, args: argparse.Namespace) -> State:
     }
 
 
-def _resume(
+def _check_saved(
     parser: ArgumentParser, args: argparse.Namespace, thread: str, snapshot: StateSnapshot
-) -> Command[Any] | None:
-    """
-    Вход графа для сохраненного потока
-
-    Вывод:
-        Command | None: Решение по кандидату или None - продолжение с места остановки
-    """
+) -> None:
+    """Сохраненный поток можно продолжить этими аргументами: версия, решение, без новых данных"""
     if snapshot.values.get("version") != STATE_VERSION:
-        parser.error(f"поток {thread} сохранен другой версией ruts-adapt: начните новый поток")
+        parser.error(
+            f"поток {thread} сохранен другой версией ruts-adapt: начните новый поток "
+            "с другим именем"
+        )
     given = [
         name
         for name, value in (
@@ -282,23 +344,17 @@ def _resume(
     if given:
         parser.error(f"поток {thread} уже есть, продолжение не принимает: {', '.join(given)}")
     decided = args.approve or args.reject is not None
-    if not snapshot.next:
-        if decided:
-            parser.error(f"поток {thread} уже завершен")
-        return None
-    if snapshot.interrupts and not decided:
-        parser.error(f"поток {thread} ждет решения: --approve или --reject ЗАМЕЧАНИЕ")
+    if decided and not snapshot.next:
+        parser.error(f"поток {thread} уже завершен")
     if decided and not snapshot.interrupts:
         parser.error(f"поток {thread} не ждет решения")
-    print(f"Продолжаем поток {thread}", file=sys.stderr)
-    return Command(resume={"feedback": args.reject}) if decided else None
 
 
 def adapt(
     graph: CompiledStateGraph[State, Context],
     graph_input: State | Command[Any] | None,
     config: RunnableConfig,
-    context: Context,
+    context: Context | None,
     reporter: Reporter,
 ) -> Result | None:
     """
@@ -313,7 +369,7 @@ def adapt(
         graph_input (State | Command | None): Вход нового потока, решение по кандидату
             или None - продолжение сохраненного потока с места остановки
         config (RunnableConfig): Конфигурация с потоком (thread_id)
-        context (Context): Модели писателя и судьи
+        context (Context | None): Модели писателя и судьи; None, если граф их не вызовет
         reporter (Reporter): Печать хода работы
 
     Вывод:
@@ -403,7 +459,8 @@ def _read(file: str) -> str:
             raise ValueError("нет текста: укажите ФАЙЛ или передайте текст через stdin")
         data = sys.stdin.buffer.read()
         try:
-            return data.decode("utf-8")
+            # Как при чтении файла: без BOM и с переводами строк \n
+            return io.TextIOWrapper(io.BytesIO(data), encoding="utf-8-sig").read()
         except UnicodeDecodeError:
             raise ValueError("текст в stdin не в кодировке UTF-8") from None
     path = Path(file)
@@ -411,7 +468,7 @@ def _read(file: str) -> str:
     if path.is_dir():
         raise ValueError(f"не удалось прочитать {file}: это каталог")
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as error:
         reason = next((text for kind, text in FILE_ERRORS if isinstance(error, kind)), str(error))
         raise ValueError(f"не удалось прочитать {file}: {reason}") from None
