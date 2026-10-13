@@ -136,8 +136,8 @@ def test_live(case, context, live_runs):
         try:
             for values in build_graph().stream(initial, context=context, stream_mode="values"):
                 state = values
-        except Exception as failure:
-            error = f"{type(failure).__name__}: {failure}"
+        except BaseException as failure:
+            error = f"{type(failure).__name__}: {failure}".removesuffix(": ")
             raise
         finally:
             tokens = sum(
