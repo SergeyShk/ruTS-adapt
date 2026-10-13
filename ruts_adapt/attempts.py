@@ -95,23 +95,24 @@ def best(attempts: list[Attempt]) -> Attempt:
     )
 
 
-def candidate(attempts: list[Attempt], rejected: list[int] | None = None) -> Result:
+def candidate(attempts: list[Attempt], after: int = 0) -> Result:
     """
     Итог по попыткам
 
     Описание:
-        Последняя попытка, если она принята, иначе лучшая из всех (best);
-        попытки, которые вернул проверяющий, не выбираются
+        Последняя попытка, если она принята, иначе лучшая (best) из попыток
+        с номером больше after. После возврата проверяющим after - число попыток
+        в момент возврата: более ранние, в том числе возвращенные, написаны
+        без его замечаний и не выбираются
 
     Аргументы:
-        attempts (list[Attempt]): Попытки, хотя бы одна не возвращенная
-        rejected (list[int]): Номера возвращенных попыток
+        attempts (list[Attempt]): Попытки, хотя бы одна с номером больше after
+        after (int): Номер последней попытки, которая не может стать итогом
 
     Вывод:
         Result: Принятая или лучшая попытка
     """
-    rejected = rejected or []
-    remaining = [attempt for attempt in attempts if attempt.number not in rejected]
+    remaining = [attempt for attempt in attempts if attempt.number > after]
     if remaining[-1].accepted:
         return Result(Outcome.ACCEPTED, remaining[-1].text, remaining[-1])
     chosen = best(remaining)

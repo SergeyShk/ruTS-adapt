@@ -207,6 +207,21 @@ def test_review_rejected_not_candidate():
     assert (state["result"].attempt.number, state["result"].text) == (2, MEDIUM)
 
 
+def test_review_candidate_has_remark():
+    """После возврата на решение уходит попытка с замечанием, а не более ранняя без него"""
+    lossy = verdict(FactStatus.KEPT, FactStatus.LOST)
+    writer, judge = models(drafts=[MEDIUM] * 3, verdicts=[KEPT, lossy, lossy])
+    graph, context = saved(writer, judge, max_attempts=2)
+    assert graph.get_state(CONFIG).interrupts[0].value["attempt"] == 1
+    graph.invoke(Command(resume={"feedback": "проще"}), CONFIG, context=context)
+    snapshot = graph.get_state(CONFIG)
+    assert snapshot.values["rejected_after"] == 2
+    # Попытка 2 не хуже попытки 3, но написана до замечания
+    assert snapshot.interrupts[0].value == {"attempt": 3, "outcome": Outcome.BEST}
+    state = graph.invoke(Command(resume={"feedback": None}), CONFIG, context=context)
+    assert state["result"].attempt.number == 3
+
+
 def test_resume_after_error():
     """После ошибки модели поток продолжается с упавшего узла: факты не выписываются заново"""
     writer = FakeChatModel(replies=[anthropic(Draft(text=SIMPLE))])

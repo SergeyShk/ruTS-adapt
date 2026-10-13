@@ -70,8 +70,14 @@ def test_candidate_skips_rejected():
     """Возвращенная проверяющим попытка не становится кандидатом снова"""
     accepted = attempt(1)
     worse = attempt(2, text=MEDIUM)
-    assert candidate([accepted, worse], rejected=[1]) == Result(Outcome.BEST, MEDIUM, worse)
+    assert candidate([accepted, worse], after=1) == Result(Outcome.BEST, MEDIUM, worse)
     assert candidate([accepted, worse]).attempt is accepted
+
+
+def test_candidate_after_rejection():
+    """После возврата кандидат - только попытки после него, даже если более ранняя лучше"""
+    first, unseen, rewritten = attempt(1, gap=5.0), attempt(2, gap=1.0), attempt(3, gap=4.0)
+    assert candidate([first, unseen, rewritten], after=2).attempt is rewritten
 
 
 def test_critique_too_complex():
