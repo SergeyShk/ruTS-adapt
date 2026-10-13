@@ -86,7 +86,18 @@ The reader's grade `-g` is a school grade from 1 to 11 or a year of university f
 | 12-14 | university years 1-3 (ages 17-19) |
 | 15-17 | university years 4-6 (ages 20-22) |
 
-A text is at the target level if the ruTS consensus grade, the median of the readability formulas, falls into that level. If the source text is already at the level, the command returns it as is without calling the model. `-n` sets the maximum number of attempts, from 1 to 10, 3 by default.
+A text is at the target level if the ruTS consensus grade, the median of the readability formulas, falls into that level. If the source text is already at the level, the command returns it as is without calling the model. On a text shorter than 100 words the consensus grade is unstable, and the command warns about it. `-n` sets the maximum number of attempts, from 1 to 10, 3 by default.
+
+The exit code tells whether the text passed the check, which helps when processing many files:
+
+| Code | Meaning | stdout |
+| :-: | :-- | :-- |
+| 0 | the text is at the target level with all facts kept, or the source text is already at the level | the final text |
+| 3 | no attempt passed the check, the best one is chosen | the best attempt |
+| 4 | a candidate waits for a decision (`-r`) | empty |
+| 1 | a model or storage error | empty |
+| 2 | invalid arguments, settings or text; the thread is busy with another run | empty |
+| 130 | Ctrl+C | empty |
 
 ### Human review and resuming
 
@@ -96,7 +107,7 @@ Every run is an adaptation thread with its own name, and its state is saved afte
 uv run ruts-adapt --thread d14f7b6c
 ```
 
-The hints in the command's output write `ruts-adapt` without `uv run`: that is how the command is called in an environment activated with `source .venv/bin/activate`.
+The hints in the command's output write `ruts-adapt` without `uv run`: that is how the command is called in an environment activated with `source .venv/bin/activate`. One run works with a thread at a time: a second run of the same thread while the first one is going fails with an error.
 
 With `-r` the command pauses before the result and waits for a decision. The thread name can be chosen:
 
@@ -106,7 +117,7 @@ uv run ruts-adapt -t dorset --approve                       # accept the text
 uv run ruts-adapt -t dorset --reject "без латинских названий"  # send it back with a remark
 ```
 
-A rejected text is rewritten with the remark taken into account, even after the attempt limit, and waits for a decision again. The remark stays in force for later attempts too.
+A rejected text is rewritten with the remark taken into account, even after the attempt limit, and waits for a decision again. The remark stays in force for later attempts too. `ruts-adapt -t dorset` without a decision shows the waiting candidate again.
 
 ## Models and settings
 
@@ -120,14 +131,14 @@ export RUTS_ADAPT_JUDGE_MODEL=openai:gpt-5
 | :-- | :-- | :-- |
 | `anthropic` | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | `openai` | `openai:gpt-5` | `OPENAI_API_KEY` |
-| `google_genai` | `google_genai:gemini-2.5-pro` | `GOOGLE_API_KEY` |
+| `google_genai` | `google_genai:gemini-3.1-pro` | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
 | `ollama` | `ollama:qwen3:30b` | none: a local [Ollama](https://ollama.com) server |
 
 | Variable | What it sets | Default |
 | :-- | :-- | :-- |
 | `RUTS_ADAPT_WRITER_MODEL`, `RUTS_ADAPT_JUDGE_MODEL` | the writer's and the judge's model | `anthropic:claude-opus-5-5` |
-| `RUTS_ADAPT_<WRITER\|JUDGE>_EFFORT` | reasoning effort: `low` … `max` for Anthropic, `none` … `xhigh` for OpenAI, `minimal` … `high` for Gemini, `none` … `high` for Ollama; an empty value means the provider's default | `high` for the default model, otherwise the provider's default |
-| `RUTS_ADAPT_<WRITER\|JUDGE>_MAX_TOKENS` | response limit including reasoning, in tokens | 64,000 for the default model, otherwise the provider's default |
+| `RUTS_ADAPT_<WRITER\|JUDGE>_EFFORT` | reasoning effort: `low` … `max` for Anthropic, `none` … `max` for OpenAI, `minimal` … `high` for Gemini, `none` … `high` for Ollama; an empty value means the provider's default, and models without effort levels take only an empty value | `high` for the default model, otherwise the provider's default |
+| `RUTS_ADAPT_<WRITER\|JUDGE>_MAX_TOKENS` | response limit including reasoning, in tokens | 64,000 for the default model and for Claude models whose limit LangChain does not know, otherwise the provider's default |
 | `RUTS_ADAPT_<WRITER\|JUDGE>_CONTEXT` | context window of an Ollama model, in tokens | 32,768 |
 | `RUTS_ADAPT_FALLBACKS` | Anthropic only: when the model refuses, retry the request on a fallback model, 1 or 0 | 1 |
 | `RUTS_ADAPT_DATA_DIR` | directory with saved threads | the user data directory: `~/Library/Application Support/ruts-adapt`, `~/.local/share/ruts-adapt` or `%LOCALAPPDATA%\ruts-adapt` |
@@ -197,9 +208,9 @@ Orange nodes call a model, blue ones measure the text with ruTS, the yellow one 
 
 **Loop.** Every attempt rewrites the source text, not the previous draft, so errors do not accumulate. The critique is built from the ruTS measurements and the judge's verdict and does not depend on the model it evaluates.
 
-**Retries.** A model node (`extract_facts`, `rewrite`, `judge`) is called up to three times if the response cannot be used but a retry may help: it does not match the schema, the model stopped unexpectedly, no facts were found in the text, the draft is empty or not in Russian, or the judge did not rate every fact exactly once. A refusal, a response cut off by the token limit and a failed call (key, network, provider limits) fail at once; such a run resumes by the thread name.
+**Retries.** A model node (`extract_facts`, `rewrite`, `judge`) is called up to three times with pauses of 2 and 4 s if a retry may help: the response does not match the schema, the model stopped unexpectedly, no facts were found in the text, the draft is empty or not in Russian, the judge did not rate every fact exactly once, the server is overloaded or failing, the rate limit is exceeded, the network dropped or the response timed out. A refusal, a response cut off by the token limit, a text that does not fit the context window, and an invalid key or request fail at once; such a run resumes by the thread name.
 
-**Saving and resuming.** A SQLite checkpointer writes the thread state to `checkpoints.sqlite` in the data directory after every step; the thread name is the `thread_id`. The `review` node calls `interrupt`: the graph stops, and `--approve` or `--reject` resume it through `Command(resume=...)`. An interrupted run resumes from the last saved step.
+**Saving and resuming.** A SQLite checkpointer writes the thread state to `checkpoints.sqlite` in the data directory after every step; the thread name is the `thread_id`. The `review` node calls `interrupt`: the graph stops, and `--approve` or `--reject` resume it through `Command(resume=...)`. An interrupted run resumes from the last saved step. After a run only the last checkpoint of the thread is kept: resuming needs nothing more.
 
 ## Development
 

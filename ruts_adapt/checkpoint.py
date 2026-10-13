@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,6 +15,13 @@ STATE_TYPES = (Target, Measurement, FactCheck, FactStatus, Attempt, Outcome, Res
 # Увеличивать при изменении полей State и классов из STATE_TYPES: старые потоки так не восстановить
 STATE_VERSION = 2
 DATABASE = "checkpoints.sqlite"
+LOCKS = "locks"
+# Секунды ожидания, пока другой процесс создает таблицы новой базы
+SETUP_TIMEOUT = 5.0
+
+
+class ThreadBusyError(Exception):
+    """Поток уже открыт другим процессом"""
 
 
 def serializer() -> JsonPlusSerializer:
@@ -54,6 +62,76 @@ def checkpointer(data_dir: Path) -> Iterator[SqliteSaver]:
     # LangGraph пишет состояние и из потоков параллельных ветвей
     connection = sqlite3.connect(data_dir / DATABASE, check_same_thread=False)
     try:
-        yield SqliteSaver(connection, serde=serializer())
+        saver = SqliteSaver(connection, serde=serializer())
+        _setup(saver)
+        yield saver
     finally:
         connection.close()
+
+
+@contextmanager
+def thread_lock(data_dir: Path, thread: str) -> Iterator[None]:
+    """
+    Исключительная блокировка потока, пока открыт контекст
+
+    Описание:
+        Блокировка - открытая транзакция в файле потока в каталоге LOCKS: другой
+        процесс не может работать с тем же потоком, а завершение процесса,
+        в том числе аварийное, блокировку снимает
+
+    Аргументы:
+        data_dir (Path): Каталог данных
+        thread (str): Поток адаптации
+
+    Исключения:
+        ThreadBusyError: Если поток открыт другим процессом
+    """
+    path = data_dir / LOCKS / f"{thread}.sqlite"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, timeout=0, isolation_level=None)
+    try:
+        try:
+            connection.execute("BEGIN EXCLUSIVE")
+        except sqlite3.OperationalError:
+            raise ThreadBusyError(f"поток {thread} уже выполняется в другом процессе") from None
+        yield
+    finally:
+        connection.close()
+
+
+def prune(saver: SqliteSaver, thread: str) -> None:
+    """
+    Удаление всех чекпоинтов потока, кроме последнего
+
+    Описание:
+        Продолжению потока нужен только последний чекпоинт с его записями,
+        а каждый чекпоинт хранит состояние целиком - с исходником и всеми
+        попытками, так что без чистки база растет квадратично по числу попыток
+
+    Аргументы:
+        saver (SqliteSaver): Хранилище
+        thread (str): Поток адаптации
+    """
+    latest = saver.get_tuple({"configurable": {"thread_id": thread}})
+    if latest is None:
+        return
+    checkpoint_id = latest.config["configurable"]["checkpoint_id"]
+    with saver.lock, saver.conn:
+        for table in ("checkpoints", "writes"):
+            saver.conn.execute(
+                f"DELETE FROM {table} WHERE thread_id = ? AND checkpoint_id != ?",
+                (thread, checkpoint_id),
+            )
+
+
+def _setup(saver: SqliteSaver) -> None:
+    """Таблицы базы; если их одновременно создает другой процесс - повтор до SETUP_TIMEOUT"""
+    deadline = time.monotonic() + SETUP_TIMEOUT
+    while True:
+        try:
+            saver.setup()
+            return
+        except sqlite3.OperationalError as error:
+            if "locked" not in str(error) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)

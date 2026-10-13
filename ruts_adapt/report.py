@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from typing import Any, TextIO
 
 from .attempts import MTLD_DROP, Attempt, Outcome, Result, mtld_drop
-from .measure import Direction, Measurement, Target
+from .measure import STABLE_WORDS, Direction, Measurement, Target
 from .tasks import FactCheck, FactStatus
 
 DIRECTIONS = {
@@ -76,6 +76,11 @@ class Reporter:
                 f"Исходный текст: «{self.source.level}», сводный класс {self.source.grade:.1f}, "
                 f"{self.source.n_words} слов; {DIRECTIONS[direction]} «{self.target.level}»"
             )
+            if self.source.n_words < STABLE_WORDS:
+                self._print(
+                    f"Предупреждение: в тексте меньше {STABLE_WORDS} слов - на таком тексте "
+                    "сводный класс неустойчив, и небольшая правка может сменить ступень"
+                )
         elif node == "extract_facts":
             self._print(f"Фактов в исходном тексте: {len(values['facts'])}")
         elif node == "rewrite":

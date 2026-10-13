@@ -7,6 +7,26 @@ from ruts.readability_stats import grade_to_age
 
 MIN_GRADE = GRADE_AGE_LEVELS[0][0]
 MAX_GRADE = GRADE_AGE_LEVELS[-1][1]
+# На тексте короче сводный класс неустойчив: слияние двух предложений нередко меняет ступень
+STABLE_WORDS = 100
+
+
+def number(value: float, digits: int = 1) -> str:
+    """
+    Число с десятичной запятой для текстов по-русски
+
+    Аргументы:
+        value (float): Число
+        digits (int): Знаков после запятой
+
+    Вывод:
+        str: Число с запятой
+
+    Пример использования:
+        >>> number(4.65), number(12.0, 0), number(3.125, 2)
+        ('4,7', '12', '3,12')
+    """
+    return f"{value:.{digits}f}".replace(".", ",")
 
 
 class Direction(StrEnum):
@@ -120,12 +140,13 @@ class LevelNorm:
 
         Пример использования:
             >>> LEVEL_NORMS[1].describe()
-            'обычно 7-10 слов в предложении, 4.7 буквы в слове и не больше 2% слов от пяти слогов'
+            'обычно 7,2-10,0 слова в предложении, 4,7 буквы в слове и не больше 1,5% слов от пяти слогов'
         """
         low, high = self.words_per_sent
         return (
-            f"обычно {low:.0f}-{high:.0f} слов в предложении, {self.letters_per_word:.1f} буквы "
-            f"в слове и не больше {self.complex_words:.0%} слов от пяти слогов"
+            f"обычно {number(low)}-{number(high)} слова в предложении, "
+            f"{number(self.letters_per_word)} буквы в слове и не больше "
+            f"{number(100 * self.complex_words)}% слов от пяти слогов"
         )
 
 

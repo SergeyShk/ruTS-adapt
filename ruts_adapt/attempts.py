@@ -2,11 +2,15 @@ import math
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .measure import Measurement, Target
+from .measure import LEVEL_NORMS, Measurement, Target, number
 from .tasks import FactCheck, FactStatus
 
 MTLD_DROP = 0.3
 MTLD_MIN_WORDS = 100
+# Для ступеней без норм (выше 4-6) предложение не длиннее верхней границы нормы 4-6 - уже короткое
+SHORT_SENTENCE = LEVEL_NORMS[4].words_per_sent[1]
+# Верхний квартиль длины предложения в текстах 10-11-го класса TextsByGrade
+LONG_SENTENCE = 18.5
 
 
 @dataclass(frozen=True)
@@ -132,11 +136,13 @@ def critique(
     Описание:
         Указания из признаков ruTS, из которых складывается сводный класс:
         в сравнении с исходным текстом, с нормами ступени цели (Target.norm)
-        и с другими попытками. Для ступени без норм, если одна попытка сложнее
-        цели, а другая проще, критика называет признаки текста между ними -
-        линейно по сводному классу к середине ступени. Затем список искаженных
-        и потерянных фактов с цитатами судьи. Сигнал не зависит от модели,
-        которую он оценивает
+        и с другими попытками. Совет, что менять - слова или предложения, - учитывает
+        нормы ступени, а без них - крайние длины предложения (SHORT_SENTENCE,
+        LONG_SENTENCE). Для ступени без норм, если одна попытка сложнее цели,
+        а другая проще, критика вместо совета называет признаки текста между
+        ними - линейно по сводному классу к середине ступени. Затем список
+        искаженных и потерянных фактов с цитатами судьи. Сигнал не зависит
+        от модели, которую он оценивает. Числа - с десятичной запятой
 
     Аргументы:
         attempt (Attempt): Попытка, к которой критика
@@ -151,35 +157,35 @@ def critique(
     current = attempt.measurement
     level = (
         f"Попытка {attempt.number} читается как «{current.level}» "
-        f"(сводный класс {current.grade:.1f}), цель - «{target.level}»"
+        f"(сводный класс {number(current.grade)}), цель - «{target.level}»"
     )
     lines = []
     if attempt.gap > 0:
-        lines.append(f"{level}: текст сложнее цели на {attempt.gap:.1f} класса.")
+        lines.append(f"{level}: текст сложнее цели на {number(attempt.gap)} класса.")
     elif attempt.gap < 0:
-        lines.append(f"{level}: текст проще цели на {-attempt.gap:.1f} класса.")
+        lines.append(f"{level}: текст проще цели на {number(-attempt.gap)} класса.")
     else:
         lines.append(f"{level}: уровень достигнут, сохраните его.")
     if attempt.gap != 0:
         lines.append(
-            f"Сейчас в среднем {current.words_per_sent:.1f} слова в предложении "
-            f"(в исходном {source.words_per_sent:.1f}), {current.syllables_per_word:.2f} слога "
-            f"и {current.letters_per_word:.2f} буквы в слове ({source.syllables_per_word:.2f} "
-            f"и {source.letters_per_word:.2f}), {current.complex_words:.0%} слов от пяти слогов "
-            f"({source.complex_words:.0%})."
+            f"Сейчас в среднем {number(current.words_per_sent)} слова в предложении "
+            f"(в исходном {number(source.words_per_sent)}), "
+            f"{number(current.syllables_per_word, 2)} слога и "
+            f"{number(current.letters_per_word, 2)} буквы в слове "
+            f"({number(source.syllables_per_word, 2)} и {number(source.letters_per_word, 2)}), "
+            f"{current.complex_words:.0%} слов от пяти слогов ({source.complex_words:.0%})."
         )
         if target.norm is not None:
             lines.append(f"В текстах для этого уровня {target.norm.describe()}.")
-        lines.append(_advice(attempt, target))
         # С нормами ориентир дают они: признаки между попытками могли бы им противоречить
-        if target.norm is None and (between := _between(attempts, target)):
-            lines.append(between)
+        between = None if target.norm else _between(attempts, target)
+        lines.append(between or _advice(attempt, target))
     if len(attempts) > 1:
         lines.append("Все попытки:")
         lines += [
-            f"{item.number}. Сводный класс {item.measurement.grade:.1f}: "
-            f"{item.measurement.words_per_sent:.1f} слова в предложении, "
-            f"{item.measurement.letters_per_word:.2f} буквы в слове, "
+            f"{item.number}. Сводный класс {number(item.measurement.grade)}: "
+            f"{number(item.measurement.words_per_sent)} слова в предложении, "
+            f"{number(item.measurement.letters_per_word, 2)} буквы в слове, "
             f"{item.measurement.complex_words:.0%} слов от пяти слогов"
             for item in attempts
         ]
@@ -200,20 +206,24 @@ def _advice(attempt: Attempt, target: Target) -> str:
     words = attempt.measurement.words_per_sent
     norm = target.norm
     if attempt.gap > 0:
-        if norm is not None and words <= norm.words_per_sent[1]:
+        if words <= (norm.words_per_sent[1] if norm else SHORT_SENTENCE):
+            already = "не длиннее, чем в текстах этого уровня" if norm else "короткие"
             return (
-                "Предложения уже не длиннее, чем в текстах этого уровня: не дробите их дальше, "
+                f"Предложения уже {already}: не дробите их дальше, "
                 "а заменяйте длинные слова и термины короткими и простыми."
             )
+        if norm is not None and attempt.measurement.letters_per_word <= norm.letters_per_word:
+            return "Слова уже не длиннее, чем в текстах этого уровня: делите длинные предложения."
         return "Делите длинные предложения и заменяйте длинные и многосложные слова короткими."
-    if norm is None:
-        return "Объединяйте короткие предложения и используйте более точные и длинные слова."
-    if words < norm.words_per_sent[0]:
+    if norm is not None and words < norm.words_per_sent[0]:
         return "Предложения короче, чем в текстах этого уровня: объединяйте их."
-    return (
-        "Предложения уже не короче, чем в текстах этого уровня: не объединяйте их дальше, "
-        "а используйте более точные и длинные слова."
-    )
+    if norm is not None or words >= LONG_SENTENCE:
+        already = "не короче, чем в текстах этого уровня" if norm else "длинные"
+        return (
+            f"Предложения уже {already}: не объединяйте их дальше, "
+            "а используйте более точные и длинные слова."
+        )
+    return "Объединяйте короткие предложения и используйте более точные и длинные слова."
 
 
 def _between(attempts: list[Attempt], target: Target) -> str | None:
@@ -230,7 +240,8 @@ def _between(attempts: list[Attempt], target: Target) -> str | None:
     letters = low.letters_per_word + share * (high.letters_per_word - low.letters_per_word)
     return (
         f"Попытка {harder.number} сложнее цели, попытка {easier.number} проще: нужен текст "
-        f"между ними, около {words:.0f} слов в предложении и {letters:.1f} буквы в слове."
+        f"между ними, около {number(words, 0)} слов в предложении и {number(letters)} буквы "
+        "в слове."
     )
 
 

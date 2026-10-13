@@ -10,12 +10,13 @@ ENV_PREFIX = "RUTS_ADAPT_"
 # Уровни усилия, которые принимает модель чата LangChain каждого провайдера
 EFFORTS = {
     "anthropic": ("low", "medium", "high", "xhigh", "max"),
-    "openai": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "openai": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
     "google_genai": ("minimal", "low", "medium", "high"),
     "ollama": ("none", "low", "medium", "high"),
 }
 SWITCHES = {"1": True, "0": False}
 DEFAULT_MODEL = "anthropic:claude-opus-5-5"
+DEFAULT_MAX_TOKENS = 64_000
 DEFAULT_OLLAMA_CONTEXT = 32_768
 DEFAULT_DATA_DIR = Path(user_data_dir("ruts-adapt", appauthor=False))
 
@@ -47,7 +48,7 @@ class ModelSettings:
 
     model: str = DEFAULT_MODEL
     effort: str | None = "high"
-    max_tokens: int | None = 64_000
+    max_tokens: int | None = DEFAULT_MAX_TOKENS
     fallbacks: bool = True
     context: int | None = None
 
@@ -94,6 +95,9 @@ class Settings:
         """
         Чтение настроек из окружения
 
+        Описание:
+            Пробелы по краям значений не учитываются
+
         Аргументы:
             environ (Mapping[str, str]): Переменные окружения; None - os.environ
 
@@ -113,6 +117,9 @@ class Settings:
             (64000, None)
         """
         environ = os_environ if environ is None else environ
+        environ = {
+            key: value.strip() for key, value in environ.items() if key.startswith(ENV_PREFIX)
+        }
         fallbacks = _switch(environ, "FALLBACKS", ModelSettings.fallbacks)
         return cls(
             writer=_model_settings(environ, "WRITER", fallbacks),

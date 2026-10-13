@@ -8,20 +8,43 @@ RUSSIAN = re.compile(r"[а-яё]", re.IGNORECASE)
 FOREIGN_CYRILLIC = re.compile(r"(?![а-яё])[\u0400-\u052f]", re.IGNORECASE)
 
 
-def check_russian(text: str) -> None:
+def russian_share(text: str) -> float:
+    """
+    Доля букв русского алфавита среди всех букв текста
+
+    Описание:
+        Буквы считаются без знаков ударения (strip_marks); в тексте без букв - 0
+
+    Аргументы:
+        text (str): Текст
+
+    Вывод:
+        float: Доля от 0 до 1
+
+    Пример использования:
+        >>> russian_share("Дуб (Quercus robur)")
+        0.2
+    """
+    text = strip_marks(text)
+    letters = sum(char.isalpha() for char in text)
+    return len(RUSSIAN.findall(text)) / letters if letters else 0.0
+
+
+def check_russian(text: str, min_share: float = MIN_RUSSIAN_SHARE) -> None:
     """
     Проверка, что текст на русском языке
 
     Описание:
         ruTS считает слоги и слова по правилам русского языка, поэтому уровень
         текста на другом языке или без букв не имеет смысла. Ошибку дают текст
-        без букв, меньше половины букв русского алфавита и от 3 % букв кириллицы
+        без букв, доля букв русского алфавита ниже min_share и от 3 % букв кириллицы
         не из него (і, ї, ў, ј, қ), как в украинском, белорусском, сербском или
         казахском тексте; доля в сообщении округляется вниз. Буквы считаются
         без знаков ударения (strip_marks): ѐ, ѝ и «чтó» - русские
 
     Аргументы:
         text (str): Текст
+        min_share (float): Наименьшая доля букв русского алфавита
 
     Исключения:
         ValueError: Если в тексте нет букв или он, похоже, не на русском языке
@@ -38,7 +61,7 @@ def check_russian(text: str) -> None:
     if not letters:
         raise ValueError("В тексте нет букв: адаптировать нечего")
     russian = len(RUSSIAN.findall(text))
-    if russian / letters < MIN_RUSSIAN_SHARE:
+    if russian / letters < min_share:
         raise ValueError(
             f"Букв русского алфавита - только {_percent(russian, letters)}: "
             "ruts-adapt адаптирует только русские тексты"

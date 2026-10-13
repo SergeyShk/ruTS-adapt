@@ -1,6 +1,6 @@
 import pytest
 
-from ruts_adapt.language import check_russian
+from ruts_adapt.language import check_russian, russian_share
 
 
 @pytest.mark.parametrize(
@@ -37,3 +37,7 @@ def test_not_russian(text, message):
     with pytest.raises(ValueError) as info:
         check_russian(text)
     assert str(info.value) == message
+
+
+def test_russian_share_no_letters():
+    assert russian_share("123 …") == 0.0

@@ -84,7 +84,8 @@ def _retryable(error: Exception) -> bool:
     return isinstance(error, ModelError) and error.retryable
 
 
-RETRY = RetryPolicy(max_attempts=3, retry_on=_retryable)
+# Пауза 2 и 4 с: перегрузка провайдера и сбой сети проходят не сразу
+RETRY = RetryPolicy(initial_interval=2.0, max_attempts=3, retry_on=_retryable)
 
 
 def measure_source(state: State) -> dict[str, Any]:
