@@ -79,7 +79,8 @@ def test_chat_model_vertex(monkeypatch):
 
 def test_chat_model_anthropic_no_profile(keys):
     """Claude без профиля LangChain получает лимит модели по умолчанию, а не 4096 токенов"""
-    model = chat_model(ModelSettings("anthropic:claude-haiku-5-5", None, None))
+    model = chat_model(ModelSettings("anthropic:claude-opus-9-9", None, None))
+    assert model.profile is None
     assert model.max_tokens == 64_000
 
 
