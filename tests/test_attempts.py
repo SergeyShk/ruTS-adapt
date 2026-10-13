@@ -11,6 +11,7 @@ from tests.samples import DECREE, FACTS, KEPT, MEDIUM, SIMPLE, verdict
 TARGET = Target.from_grade(2)
 SIMPLE_M = measure(SIMPLE)
 TERMS = "Хлоропласты синтезируют углеводы. Фотосинтез преобразует электромагнитную энергию."
+PLAIN = "Кот спит на теплом окне, а пес лежит у двери и ждет нас."
 
 
 def attempt(number=1, text=SIMPLE, checks=KEPT.checks, gap=None):
@@ -120,33 +121,49 @@ def test_critique_too_simple():
 
 
 def test_critique_short_sentences_simple():
-    """Простой текст короче норм ступени: объединять предложения, слова оставить простыми"""
+    """Простой текст с предложениями короче нормы ступени: объединять предложения"""
     target = Target.from_grade(5)
     current = attempt(gap=target.gap(measure(SIMPLE).grade))
     text = critique(current, [current], measure(DECREE), target, FACTS)
-    assert text.splitlines()[-1] == (
-        "Предложения короче, чем в текстах этого уровня: объединяйте их, "
-        "а слова оставляйте простыми."
+    assert (
+        text.splitlines()[-1] == "Предложения короче, чем в текстах этого уровня: объединяйте их."
     )
 
 
-def test_critique_between():
-    """Попытки по обе стороны ступени: признаки между ними и история всех попыток"""
+def test_critique_long_sentences_simple():
+    """Простой текст с предложениями не короче нормы: удлинять слова, а не фразы"""
     target = Target.from_grade(5)
+    current = attempt(text=PLAIN, gap=target.gap(measure(PLAIN).grade))
+    assert current.gap < 0
+    assert current.measurement.words_per_sent >= target.norm.words_per_sent[0]
+    text = critique(current, [current], measure(DECREE), target, FACTS)
+    assert text.splitlines()[-1] == (
+        "Предложения уже не короче, чем в текстах этого уровня: не объединяйте их дальше, "
+        "а используйте более точные и длинные слова."
+    )
+
+
+def between(grade):
+    """Критика попытки 3 из трех: 2 и 1 сложнее ступени цели, 3 проще"""
+    target = Target.from_grade(grade)
     harder = attempt(1, text=MEDIUM, gap=target.gap(measure(MEDIUM).grade))
     other = attempt(2, text=DECREE, gap=target.gap(measure(DECREE).grade))
     easier = attempt(3, gap=target.gap(measure(SIMPLE).grade))
-    text = critique(easier, [other, harder, easier], measure(DECREE), target, FACTS)
-    lines = text.splitlines()
-    # Середина ступени 4-6 - класс 5: доля пути от попытки 3 (1.0) к попытке 1 (25.5)
-    share = (5 - 1.0) / (25.5 - 1.0)
+    return critique(easier, [other, harder, easier], measure(DECREE), target, FACTS)
+
+
+def test_critique_between():
+    """Ступень без норм, попытки по обе стороны: признаки между ближайшими и история попыток"""
+    lines = between(8).splitlines()
+    # Середина ступени 7-9 - класс 8: доля пути от попытки 3 (1.0) к попытке 1 (25.5)
+    share = (8 - 1.0) / (25.5 - 1.0)
     words = SIMPLE_M.words_per_sent + share * (13.0 - SIMPLE_M.words_per_sent)
     letters = SIMPLE_M.letters_per_word + share * (9.08 - SIMPLE_M.letters_per_word)
-    assert lines[4] == (
+    assert lines[3] == (
         "Попытка 1 сложнее цели, попытка 3 проще: нужен текст между ними, "
         f"около {words:.0f} слов в предложении и {letters:.1f} буквы в слове."
     )
-    assert lines[5:] == [
+    assert lines[4:] == [
         "Все попытки:",
         "2. Сводный класс 26.5: 18.0 слова в предложении, 8.33 буквы в слове, "
         "50% слов от пяти слогов",
@@ -155,6 +172,14 @@ def test_critique_between():
         "3. Сводный класс 1.0: 4.3 слова в предложении, 5.23 буквы в слове, "
         "0% слов от пяти слогов",
     ]
+
+
+def test_critique_between_norm():
+    """Ступень с нормами: ориентир - нормы, признаков между попытками нет, история есть"""
+    text = between(5)
+    assert "В текстах для этого уровня обычно 9-13 слов" in text
+    assert "между ними" not in text
+    assert "Все попытки:" in text
 
 
 def test_critique_facts():
