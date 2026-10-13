@@ -146,7 +146,7 @@ warn_unused_ignores = true
 addopts = "-v --strict-markers --strict-config --doctest-modules -m 'not llm'"
 testpaths = ["tests", "ruts_adapt"]
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
-markers = ["llm: тест вызывает API модели; запуск вручную с ключом: pytest -m llm"]
+markers = ["llm: тест вызывает API модели; запускается только make test-llm"]
 
 [tool.coverage.run]
 source = ["ruts_adapt"]
