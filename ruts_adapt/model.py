@@ -93,8 +93,8 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         Ответ Claude приходит потоком: SDK Anthropic не отправляет без потока
         запрос, который может идти дольше 10 минут, а большой max_tokens
         считается таким. Усилие и лимит сверяются с профилем модели LangChain,
-        если он их знает: модель Claude или Gemini с профилем без уровней
-        усилия усилия не принимает. Модели Claude без профиля и без MAX_TOKENS
+        если он их знает: модель Gemini с профилем без уровней усилия усилия
+        не принимает. Модели Claude без профиля и без MAX_TOKENS
         получают лимит модели по умолчанию, а не 4096 токенов LangChain. Ключ
         API модель берет из переменной окружения провайдера (KEYS), Gemini через
         Vertex AI (VERTEX) - учетные данные Google Cloud; Ollama ключа не требует,
@@ -156,10 +156,11 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
     if settings.provider == "openai" and profile.get("structured_output") is False:
         raise ValueError(f"Модель {settings.model} не поддерживает ответ по JSON-схеме")
     levels = profile.get("reasoning_effort_levels")
-    # У o-моделей OpenAI в профиле нет уровней, хотя усилие они принимают
+    # Профиль без уровней запрещает усилие только у Gemini: у o-моделей OpenAI и Claude Haiku 5.5
+    # уровней в профиле нет, хотя усилие они принимают
     if settings.effort is not None and (
         (levels is not None and settings.effort not in levels)
-        or (profile and levels is None and settings.provider != "openai")
+        or (profile and levels is None and settings.provider == "google_genai")
         or profile.get("reasoning_output") is False
     ):
         allowed = f"допустимо {', '.join(levels)}" if levels else "оставьте усилие пустым"

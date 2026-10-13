@@ -58,11 +58,12 @@ def test_chat_model_anthropic(keys):
     [
         ModelSettings("anthropic:claude-sonnet-4-5-20250929", None, 32_000),
         ModelSettings("openai:o3", "high", None),
+        ModelSettings("anthropic:claude-haiku-4-5", "low", None),
     ],
-    ids=["claude-dated", "openai-o3"],
+    ids=["claude-dated", "openai-o3", "claude-no-levels"],
 )
 def test_chat_model_profile_gaps(keys, settings):
-    """Пробелы в профилях LangChain не отклоняют рабочие модели: датированный Claude, o-модели"""
+    """Пробелы в профилях LangChain не отклоняют модели: датированный Claude, o3, Claude без уровней"""
     assert chat_model(settings).profile is not None
 
 
