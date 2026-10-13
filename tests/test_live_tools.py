@@ -7,7 +7,7 @@ from ruts_adapt.graph import Context
 from ruts_adapt.model import ModelError
 from ruts_adapt.tasks import Draft, FactCheck, Facts, FactStatus, Verdict
 from tests.fakes import USAGE, FakeChatModel, RepliesExhaustedError, anthropic
-from tests.live import Case, Damaged, damage_plan, retried, run_bench, run_graph
+from tests.live import Case, Damaged, damage_plan, live_context, retried, run_bench, run_graph
 from tests.live_report import JudgeRun, details, summary
 from tests.samples import DECREE, FACTS, KEPT, MEDIUM, ONE_LOST, SIMPLE
 
@@ -50,6 +50,22 @@ def graph_run():
     return state, runs
 
 
+def test_live_context_locked(monkeypatch):
+    """Без RUTS_ADAPT_LIVE=1 живые тесты пропускаются до создания моделей"""
+    monkeypatch.delenv("RUTS_ADAPT_LIVE", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="make test-llm"):
+        live_context()
+
+
+def test_live_context_no_key(monkeypatch):
+    """С RUTS_ADAPT_LIVE=1, но без ключа провайдера - тоже пропуск"""
+    monkeypatch.setenv("RUTS_ADAPT_LIVE", "1")
+    for variable in ("RUTS_ADAPT_WRITER_MODEL", "RUTS_ADAPT_JUDGE_MODEL", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+    with pytest.raises(pytest.skip.Exception, match="нет ANTHROPIC_API_KEY"):
+        live_context()
+
+
 def test_run_graph():
     """Прогон записывает попытки, критику к ним, итог и токены всех вызовов"""
     state, runs = graph_run()
@@ -76,7 +92,17 @@ def test_run_graph_error():
     assert run.attempts == run.critiques == []
     assert run.result is None
     assert run.tokens == CALL
-    assert run.error == "RepliesExhaustedError: Поддельной модели не задан ответ на запрос"
+    error = "RepliesExhaustedError: Поддельной модели не задан ответ на запрос"
+    assert run.error == error
+    assert summary(runs, []).splitlines()[4] == (
+        "| Постановление | официальный документ | 1-3-й класс (6-8 лет) | 26.5 | - | - (из 2) "
+        f"| ошибка: {error} | 18.0 → 18.0 | 6% → 6% | 91 → 91 | {CALL} |"
+    )
+    assert details(runs, []).split("\n\n")[-2:] == [
+        "1. Постановление устанавливает порядок субсидий\n"
+        "2. Субсидии возмещают недополученные доходы",
+        f"Ошибка: {error}",
+    ]
 
 
 def test_run_bench():
