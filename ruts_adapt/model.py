@@ -18,6 +18,8 @@ KEYS = {
     "openai": ("OPENAI_API_KEY",),
     "google_genai": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
 }
+# Gemini через Vertex AI берет учетные данные Google Cloud, а не ключ
+VERTEX = "GOOGLE_GENAI_USE_VERTEXAI"
 # Секунды ожидания ответа: модели LangChain отключают умолчание SDK (10 минут) и ждут без конца
 TIMEOUT = 600
 # Локальная модель на процессоре отвечает дольше облачной
@@ -91,10 +93,11 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         Ответ Claude приходит потоком: SDK Anthropic не отправляет без потока
         запрос, который может идти дольше 10 минут, а большой max_tokens
         считается таким. Усилие и лимит сверяются с профилем модели LangChain,
-        если он их знает: модель с профилем без уровней усилия усилия
-        не принимает. Модели Claude без профиля и без MAX_TOKENS получают лимит
-        модели по умолчанию, а не 4096 токенов LangChain. Ключ API модель берет
-        из переменной окружения провайдера (KEYS); Ollama ключа не требует,
+        если он их знает: модель Claude или Gemini с профилем без уровней
+        усилия усилия не принимает. Модели Claude без профиля и без MAX_TOKENS
+        получают лимит модели по умолчанию, а не 4096 токенов LangChain. Ключ
+        API модель берет из переменной окружения провайдера (KEYS), Gemini через
+        Vertex AI (VERTEX) - учетные данные Google Cloud; Ollama ключа не требует,
         адрес ее сервера - OLLAMA_HOST, по умолчанию localhost:11434. Окно
         контекста локальной модели задается в каждом запросе и заменяет
         умолчание сервера OLLAMA_CONTEXT_LENGTH. Ответ ждется не дольше TIMEOUT
@@ -111,7 +114,11 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
             ответ по схеме или усилие, max_tokens больше ее предела или окна контекста
     """
     keys = KEYS.get(settings.provider, ())
-    if keys and not any(os.environ.get(key) for key in keys):
+    vertex = settings.provider == "google_genai" and os.environ.get(VERTEX, "").lower() in (
+        "1",
+        "true",
+    )
+    if keys and not vertex and not any(os.environ.get(key) for key in keys):
         raise ValueError(
             f"Нет ключа API для модели {settings.model}: задайте переменную окружения "
             + " или ".join(keys)
@@ -144,12 +151,15 @@ def chat_model(settings: ModelSettings) -> BaseChatModel:
         settings.name, model_provider=settings.provider, **options
     )
     profile = model.profile or {}
-    if profile.get("structured_output") is False:
+    # Только OpenAI подменяет схему вызовом инструмента; у Claude профили LangChain
+    # помечают structured_output = false и модели, которые схему принимают
+    if settings.provider == "openai" and profile.get("structured_output") is False:
         raise ValueError(f"Модель {settings.model} не поддерживает ответ по JSON-схеме")
     levels = profile.get("reasoning_effort_levels")
+    # У o-моделей OpenAI в профиле нет уровней, хотя усилие они принимают
     if settings.effort is not None and (
         (levels is not None and settings.effort not in levels)
-        or (profile and levels is None)
+        or (profile and levels is None and settings.provider != "openai")
         or profile.get("reasoning_output") is False
     ):
         allowed = f"допустимо {', '.join(levels)}" if levels else "оставьте усилие пустым"

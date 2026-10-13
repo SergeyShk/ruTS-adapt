@@ -260,6 +260,14 @@ def test_model_create_error(capsys, monkeypatch, stdin, data_dir):
     assert "поток new не найден" in fail(capsys, ["-t", "new", "--approve"])
 
 
+def test_on_level_without_key(capsys, monkeypatch, stdin):
+    """Тексту уже на уровне цели модель не нужна, и ключ тоже"""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    stdin(SIMPLE.encode())
+    run(["-g", "2"])
+    assert capsys.readouterr().out == f"{SIMPLE}\n"
+
+
 def test_missing_key(capsys, monkeypatch, stdin):
     """Без ключа API провайдера - ошибка настроек сразу, а не на первом вызове модели"""
     stdin(DECREE.encode())
@@ -663,19 +671,19 @@ def test_bom_crlf(tmp_path, capsys, models, stdin, source):
     assert capsys.readouterr().out == "Есть новые правила.\nФирмам дают деньги.\n"
 
 
-def test_broken_pipe(tmp_path, monkeypatch):
-    """Читатель канала закрылся: код 1 без трейсбека, остаток вывода - в никуда"""
-
-    def closed(parser, args):
-        raise BrokenPipeError
-
-    monkeypatch.setattr(cli, "_run", closed)
-    with (tmp_path / "out").open("w") as stdout, (tmp_path / "err").open("w") as stderr:
-        monkeypatch.setattr(sys, "stdout", stdout)
+def test_broken_pipe(tmp_path, monkeypatch, stdin):
+    """Читатель канала закрылся до итога: код 1 без трейсбека, а не 120 при выходе интерпретатора"""
+    read, write = os.pipe()
+    os.close(read)
+    stdout = io.TextIOWrapper(os.fdopen(write, "wb"), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", stdout)
+    stdin(SIMPLE.encode())
+    with (tmp_path / "err").open("w") as stderr:
         monkeypatch.setattr(sys, "stderr", stderr)
         with pytest.raises(SystemExit) as info:
             main(["-g", "2"])
     assert info.value.code == 1
+    stdout.close()
 
 
 def test_thread_busy(capsys, data_dir):

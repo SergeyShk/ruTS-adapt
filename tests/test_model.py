@@ -53,6 +53,29 @@ def test_chat_model_anthropic(keys):
     assert model.default_request_timeout == TIMEOUT
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        ModelSettings("anthropic:claude-sonnet-4-5-20250929", None, 32_000),
+        ModelSettings("openai:o3", "high", None),
+    ],
+    ids=["claude-dated", "openai-o3"],
+)
+def test_chat_model_profile_gaps(keys, settings):
+    """Пробелы в профилях LangChain не отклоняют рабочие модели: датированный Claude, o-модели"""
+    assert chat_model(settings).profile is not None
+
+
+def test_chat_model_vertex(monkeypatch):
+    """Gemini через Vertex AI ключа API не требует"""
+    for variable in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test")
+    model = chat_model(ModelSettings("google_genai:gemini-3.1-pro", None, None))
+    assert isinstance(model, ChatGoogleGenerativeAI)
+
+
 def test_chat_model_anthropic_no_profile(keys):
     """Claude без профиля LangChain получает лимит модели по умолчанию, а не 4096 токенов"""
     model = chat_model(ModelSettings("anthropic:claude-haiku-5-5", None, None))

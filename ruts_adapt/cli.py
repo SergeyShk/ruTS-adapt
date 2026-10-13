@@ -24,7 +24,7 @@ from .attempts import Outcome, Result
 from .checkpoint import STATE_VERSION, ThreadBusyError, checkpointer, prune, thread_lock
 from .graph import Context, State, build_graph
 from .language import check_russian
-from .measure import MAX_GRADE, MIN_GRADE, Target
+from .measure import MAX_GRADE, MIN_GRADE, Target, measure
 from .model import ModelError, chat_model
 from .report import Reporter
 from .settings import Settings
@@ -249,8 +249,11 @@ def _run(parser: ArgumentParser, args: argparse.Namespace) -> None:
                 )
             started = started or _start(parser, args)
             graph_input, values = started, started
-        # Принятому кандидату модель не нужна: граф сразу идет к итогу
-        context = None if args.approve else _context(parser, settings)
+        # Модели не нужны принятому кандидату и тексту уже на уровне цели: граф идет к итогу
+        on_level = (
+            not snapshot.values and values["target"].gap(measure(values["source"]).grade) == 0
+        )
+        context = None if args.approve or on_level else _context(parser, settings)
         if snapshot.values:
             print(f"Продолжаем поток {thread}", file=sys.stderr)
         else:
@@ -289,7 +292,8 @@ def _context(parser: ArgumentParser, settings: Settings) -> Context:
 
 def _exit_with(result: Result) -> NoReturn:
     """Итоговый текст в stdout и код: 0 - на уровне цели, NOT_ACCEPTED - лучшая непринятая"""
-    print(result.text.rstrip("\n"))
+    # Сбросить буфер здесь: при выходе интерпретатора закрытый канал дал бы код 120
+    print(result.text.rstrip("\n"), flush=True)
     sys.exit(NOT_ACCEPTED if result.outcome is Outcome.BEST else 0)
 
 
