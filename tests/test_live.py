@@ -1,7 +1,9 @@
 """
 Живые прогоны графа на настоящей модели: только вручную, с ключом, они стоят денег
 
-Запуск: make test-llm (uv run pytest -m llm). Модели и провайдеры - из переменных
+Запуск - только make test-llm: тесты идут лишь с маркером llm и переменной
+RUTS_ADAPT_LIVE=1, которую задает эта цель, - любой другой запуск pytest их
+исключает или пропускает. Модели и провайдеры - из переменных
 RUTS_ADAPT_*, как у команды. Тексты - из наборов ruTS (скачиваются при первом
 запуске) и tests/data; в конце сессии pytest печатает таблицу прогонов, а с
 RUTS_ADAPT_LIVE_REPORT записывает ее в этот файл
@@ -114,7 +116,10 @@ CASES = [
 
 @pytest.fixture(scope="module")
 def context() -> Context:
-    """Модели из переменных RUTS_ADAPT_*; без ключа провайдера прогоны пропускаются"""
+    """Модели из переменных RUTS_ADAPT_*; без RUTS_ADAPT_LIVE=1 или ключа провайдера - пропуск"""
+    # Второй замок после маркера: чужое выражение -m заменило бы -m 'not llm' из addopts
+    if os.environ.get("RUTS_ADAPT_LIVE") != "1":
+        pytest.skip("живые прогоны тратят деньги и запускаются только make test-llm")
     settings = Settings.from_env()
     for role in (settings.writer, settings.judge):
         key = KEYS.get(role.provider)

@@ -46,7 +46,7 @@ test-cov: deps ## Run the tests with a coverage threshold
 	uv run pytest --cov $(APP_PATH)
 
 test-llm: deps ## Run live tests that call the model API (costs money; needs a key)
-	uv run pytest -m llm -v
+	RUTS_ADAPT_LIVE=1 uv run pytest -m llm
 
 clean: clean-build clean-pyc clean-test ## Remove all artifacts
 	rm -f .coverage coverage.xml
