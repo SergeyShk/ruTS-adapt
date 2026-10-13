@@ -185,7 +185,9 @@ def criticize(state: State) -> dict[str, Any]:
         attempt = next(attempt for attempt in attempts if attempt.number == number)
     else:
         attempt = attempts[-1]
-    text = critique(attempt, state["source_measurement"], state["target"], state["facts"])
+    text = critique(
+        attempt, attempts, state["source_measurement"], state["target"], state["facts"]
+    )
     for remark in state.get("remarks", []):
         text += f"\nЗамечание проверяющего: {remark}"
     return {"critique": text, "previous": attempt.text, "feedback": None}

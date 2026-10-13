@@ -118,17 +118,27 @@ def candidate(attempts: list[Attempt], rejected: list[int] | None = None) -> Res
     return Result(Outcome.BEST, chosen.text, chosen)
 
 
-def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[str]) -> str:
+def critique(
+    attempt: Attempt,
+    attempts: list[Attempt],
+    source: Measurement,
+    target: Target,
+    facts: list[str],
+) -> str:
     """
     Критика попытки без модели
 
     Описание:
-        Указания из признаков ruTS, из которых складывается сводный класс,
-        в сравнении с исходным текстом, и список искаженных и потерянных фактов
+        Указания из признаков ruTS, из которых складывается сводный класс:
+        в сравнении с исходным текстом, с нормами ступени цели (Target.norm)
+        и с другими попытками. Если одна попытка сложнее цели, а другая проще,
+        критика называет признаки текста между ними - линейно по сводному классу
+        к середине ступени. Затем список искаженных и потерянных фактов
         с цитатами судьи. Сигнал не зависит от модели, которую он оценивает
 
     Аргументы:
-        attempt (Attempt): Попытка
+        attempt (Attempt): Попытка, к которой критика
+        attempts (list[Attempt]): Все попытки по порядку
         source (Measurement): Уровень и признаки исходного текста
         target (Target): Цель адаптации
         facts (list[str]): Факты исходного текста
@@ -156,11 +166,20 @@ def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[
             f"и {source.letters_per_word:.2f}), {current.complex_words:.0%} слов от пяти слогов "
             f"({source.complex_words:.0%})."
         )
-        lines.append(
-            "Делите длинные предложения и заменяйте длинные и многосложные слова короткими."
-            if attempt.gap > 0
-            else "Объединяйте короткие предложения и используйте более точные и длинные слова."
-        )
+        if target.norm is not None:
+            lines.append(f"В текстах для этого уровня {target.norm.describe()}.")
+        lines.append(_advice(attempt, target))
+        if between := _between(attempts, target):
+            lines.append(between)
+    if len(attempts) > 1:
+        lines.append("Все попытки:")
+        lines += [
+            f"{item.number}. Сводный класс {item.measurement.grade:.1f}: "
+            f"{item.measurement.words_per_sent:.1f} слова в предложении, "
+            f"{item.measurement.letters_per_word:.2f} буквы в слове, "
+            f"{item.measurement.complex_words:.0%} слов от пяти слогов"
+            for item in attempts
+        ]
     if attempt.distorted:
         lines.append("Искажены факты, верните их точный смысл:")
         lines += [
@@ -171,6 +190,43 @@ def critique(attempt: Attempt, source: Measurement, target: Target, facts: list[
         lines.append("Потеряны факты, верните их:")
         lines += [f"{check.fact}. {facts[check.fact - 1]}" for check in attempt.lost]
     return "\n".join(lines)
+
+
+def _advice(attempt: Attempt, target: Target) -> str:
+    """Что менять в тексте не на уровне: слова или предложения, с оглядкой на нормы ступени"""
+    words = attempt.measurement.words_per_sent
+    norm = target.norm
+    if attempt.gap > 0:
+        if norm is not None and words <= norm.words_per_sent[1]:
+            return (
+                "Предложения уже не длиннее, чем в текстах этого уровня: не дробите их дальше, "
+                "а заменяйте длинные слова и термины короткими и простыми."
+            )
+        return "Делите длинные предложения и заменяйте длинные и многосложные слова короткими."
+    if norm is not None and words < norm.words_per_sent[0]:
+        return (
+            "Предложения короче, чем в текстах этого уровня: объединяйте их, "
+            "а слова оставляйте простыми."
+        )
+    return "Объединяйте короткие предложения и используйте более точные и длинные слова."
+
+
+def _between(attempts: list[Attempt], target: Target) -> str | None:
+    """Признаки текста между ближайшими к цели попытками по обе стороны ступени"""
+    above = [attempt for attempt in attempts if attempt.gap > 0]
+    below = [attempt for attempt in attempts if attempt.gap < 0]
+    if not above or not below:
+        return None
+    harder = min(above, key=lambda attempt: attempt.gap)
+    easier = max(below, key=lambda attempt: attempt.gap)
+    high, low = harder.measurement, easier.measurement
+    share = ((target.low + target.high) / 2 - low.grade) / (high.grade - low.grade)
+    words = low.words_per_sent + share * (high.words_per_sent - low.words_per_sent)
+    letters = low.letters_per_word + share * (high.letters_per_word - low.letters_per_word)
+    return (
+        f"Попытка {harder.number} сложнее цели, попытка {easier.number} проще: нужен текст "
+        f"между ними, около {words:.0f} слов в предложении и {letters:.1f} буквы в слове."
+    )
 
 
 def mtld_drop(source: Measurement, result: Measurement) -> float | None:
