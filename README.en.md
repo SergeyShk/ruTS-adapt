@@ -20,7 +20,7 @@
 
 * **Both directions** - simplifies a scientific article for a young pupil or raises a fairy tale to a high-school level
 * **Checked, not promised** - a text is accepted only if ruTS places it in the target level and the judge finds no lost or distorted facts
-* **Several attempts** - a rejected text gets a critique: how much harder or easier it is than the target, what to change, which facts to restore. The text is then rewritten; after the attempt limit the best attempt is chosen
+* **Several attempts** - an attempt that is not accepted gets a critique: how much harder or easier it is than the target, what to change, which facts to restore. The text is then rewritten; after the attempt limit the best attempt is chosen
 * **Any model** - Claude by default, OpenAI, Gemini or a local Ollama model, separately for the writer and the judge
 * **Stop and resume** - the state is saved after every step: an interrupted run resumes where it stopped, and the run can pause before the result for a human check
 
@@ -90,11 +90,13 @@ A text is at the target level if the ruTS consensus grade, the median of the rea
 
 ### Human review and resuming
 
-Every run is an adaptation thread with its own name, and its state is saved after every step. An interrupted run (Ctrl+C, a network failure, a provider limit) resumes with the command from the first line of the output:
+Every run is an adaptation thread with its own name, and its state is saved after every step. An interrupted run (Ctrl+C, a network failure, a provider limit) resumes by the thread name from the first line of the output:
 
 ```bash
 uv run ruts-adapt --thread d14f7b6c
 ```
+
+The hints in the command's output write `ruts-adapt` without `uv run`: that is how the command is called in an environment activated with `source .venv/bin/activate`.
 
 With `-r` the command pauses before the result and waits for a decision. The thread name can be chosen:
 
@@ -154,7 +156,7 @@ flowchart TD
 
     record -.->|"accepted or attempt limit"| finish
     record -.->|"same with --review"| review
-    record -.->|"not accepted"| critique
+    record -.->|"not accepted, limit not reached"| critique
     critique["<b>critique</b><br/>critique without a model: level, features,<br/>level norms, all attempts, facts"]
     critique --> rewrite
 
@@ -179,23 +181,23 @@ Orange nodes call a model, blue ones measure the text with ruTS, the yellow one 
 | :-- | :-- | :-- |
 | `measure_source` | ruTS measures the source text: consensus grade, level and features | `source_measurement` |
 | `extract_facts` | the judge extracts the facts of the source text - short statements that convey the meaning rather than the terms; one list for all attempts | `facts` |
-| `rewrite` | the writer rewrites the source text for the target level; from the second attempt on it sees the previous draft and its critique | `draft` |
+| `rewrite` | the writer rewrites the source text for the target level; from the second attempt on it sees the previous draft and its critique | `draft`, `draft_tokens` |
 | `measure` | ruTS measures the draft | `draft_measurement` |
-| `judge` | the judge decides for each fact whether it is kept, distorted or lost, and quotes the draft | `checks` |
+| `judge` | the judge decides for each fact whether it is kept, distorted or lost, and quotes the draft | `checks`, `judge_tokens` |
 | `record` | builds the attempt: text, level, fact checks, distance to the target level, tokens | `attempts` |
-| `critique` | writes a critique without a model: how much harder or easier the text is than the target, its features next to the source's and the level norms, all previous attempts, distorted and lost facts, human remarks | `critique`, `previous` |
+| `critique` | writes a critique without a model: how much harder or easier the text is than the target, its features next to the source's and the level norms (for grades 1-3 and 4-6), all previous attempts, distorted and lost facts, human remarks | `critique`, `previous`; resets `feedback` |
 | `review` | stops the graph and waits for a human decision: accept the candidate or send it back with a remark | `feedback`, `remarks`, `rejected` |
 | `finish` | chooses the result: the source text if it is already at the level, the accepted attempt or the best of all | `result` |
 
 **Parallel branches.** `measure` and `judge` run in the same graph step, and `record` waits for both.
 
-**State.** A node returns only the fields it changes. The `attempts` list and the remark lists `remarks` and `rejected` are declared with the `operator.add` reducer: LangGraph appends new items instead of replacing the list. Other fields keep the last value.
+**State.** A node returns only the fields it changes. The list of attempts `attempts`, the human remarks `remarks` and the numbers of the attempts the human sent back `rejected` are declared with the `operator.add` reducer: LangGraph appends new items instead of replacing the list. Other fields keep the last value.
 
 **Route after an attempt.** An attempt is accepted if the draft's consensus grade falls into the target level and the judge finds no distorted or lost facts; the graph then goes to the result. If the attempt is not accepted and the limit is not reached, the graph goes to the critique and the next attempt. After the limit, the result is the best attempt: fewer distorted and lost facts first, then closer to the level.
 
 **Loop.** Every attempt rewrites the source text, not the previous draft, so errors do not accumulate. The critique is built from the ruTS measurements and the judge's verdict and does not depend on the model it evaluates.
 
-**Retries.** A model node (`extract_facts`, `rewrite`, `judge`) is called up to three times if the response does not match the schema or the model stopped unexpectedly. A refusal and a response cut off by the token limit fail at once.
+**Retries.** A model node (`extract_facts`, `rewrite`, `judge`) is called up to three times if the response cannot be used but a retry may help: it does not match the schema, the model stopped unexpectedly, no facts were found in the text, the draft is empty or not in Russian, or the judge did not rate every fact exactly once. A refusal, a response cut off by the token limit and a failed call (key, network, provider limits) fail at once; such a run resumes by the thread name.
 
 **Saving and resuming.** A SQLite checkpointer writes the thread state to `checkpoints.sqlite` in the data directory after every step; the thread name is the `thread_id`. The `review` node calls `interrupt`: the graph stops, and `--approve` or `--reject` resume it through `Command(resume=...)`. An interrupted run resumes from the last saved step.
 
