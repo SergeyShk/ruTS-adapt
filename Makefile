@@ -1,4 +1,4 @@
-.PHONY: help uv deps lock lint ruff format mypy test test-cov clean clean-build clean-pyc clean-test
+.PHONY: help uv deps lock lint ruff format mypy test test-cov test-llm clean clean-build clean-pyc clean-test
 .DEFAULT_GOAL := help
 APP_PATH := ruts_adapt
 TESTS_PATH := tests
@@ -44,6 +44,9 @@ test: deps ## Run the tests
 
 test-cov: deps ## Run the tests with a coverage threshold
 	uv run pytest --cov $(APP_PATH)
+
+test-llm: deps ## Run live tests that call the model API (costs money; needs a key)
+	uv run pytest -m llm -v
 
 clean: clean-build clean-pyc clean-test ## Remove all artifacts
 	rm -f .coverage coverage.xml
