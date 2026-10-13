@@ -201,7 +201,7 @@ def criticize(state: State) -> dict[str, Any]:
 
 
 def finish(state: State) -> dict[str, Any]:
-    """Итог: исходник уже на уровне, принятая попытка или лучшая из всех"""
+    """Итог: исходник уже на уровне, принятая попытка или лучшая после последнего возврата"""
     attempts = state.get("attempts", [])
     if not attempts:
         return {"result": Result(Outcome.ON_LEVEL, state["source"], None)}
