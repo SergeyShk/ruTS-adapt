@@ -186,14 +186,14 @@ Orange nodes call a model, blue ones measure the text with ruTS, the yellow one 
 | `judge` | the judge decides for each fact whether it is kept, distorted or lost, and quotes the draft | `checks`, `judge_tokens` |
 | `record` | builds the attempt: text, level, fact checks, distance to the target level, tokens | `attempts` |
 | `critique` | writes a critique without a model: how much harder or easier the text is than the target, its features next to the source's and the level norms (for grades 1-3 and 4-6), all previous attempts, distorted and lost facts, human remarks | `critique`, `previous`; resets `feedback` |
-| `review` | stops the graph and waits for a human decision: accept the candidate or send it back with a remark | `feedback`, `remarks`, `rejected` |
-| `finish` | chooses the result: the source text if it is already at the level, the accepted attempt or the best of all | `result` |
+| `review` | stops the graph and waits for a human decision: accept the candidate or send it back with a remark | `feedback`, `remarks`, `rejected`, `rejected_after` |
+| `finish` | chooses the result: the source text if it is already at the level, the accepted attempt or the best one; after a human sends a text back, only among the attempts written after that | `result` |
 
 **Parallel branches.** `measure` and `judge` run in the same graph step, and `record` waits for both.
 
 **State.** A node returns only the fields it changes. The list of attempts `attempts`, the human remarks `remarks` and the numbers of the attempts the human sent back `rejected` are declared with the `operator.add` reducer: LangGraph appends new items instead of replacing the list. Other fields keep the last value.
 
-**Route after an attempt.** An attempt is accepted if the draft's consensus grade falls into the target level and the judge finds no distorted or lost facts; the graph then goes to the result. If the attempt is not accepted and the limit is not reached, the graph goes to the critique and the next attempt. After the limit, the result is the best attempt: fewer distorted and lost facts first, then closer to the level.
+**Route after an attempt.** An attempt is accepted if the draft's consensus grade falls into the target level and the judge finds no distorted or lost facts; the graph then goes to the result. If the attempt is not accepted and the limit is not reached, the graph goes to the critique and the next attempt. After the limit, the result is the best attempt: fewer distorted and lost facts first, then closer to the level. After a human sends a text back, the choice is made only among the attempts written after that: the earlier ones lack the remark.
 
 **Loop.** Every attempt rewrites the source text, not the previous draft, so errors do not accumulate. The critique is built from the ruTS measurements and the judge's verdict and does not depend on the model it evaluates.
 
