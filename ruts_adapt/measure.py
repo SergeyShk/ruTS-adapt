@@ -92,6 +92,51 @@ def measure(text: str) -> Measurement:
 
 
 @dataclass(frozen=True)
+class LevelNorm:
+    """
+    Типичные признаки текстов ступени обучения
+
+    Описание:
+        Признаки текстов наборов ruTS SovChLit и TextsByGrade с меткой класса
+        ступени, которые сводный класс ruTS относит к ней же: квартили длины
+        предложения, медиана длины слова, верхний квартиль доли сложных слов
+        и нижний квартиль MTLD текстов от 100 слов
+
+    Атрибуты:
+        words_per_sent (tuple[float, float]): Длина предложения в словах: от и до
+        letters_per_word (float): Длина слова в буквах
+        complex_words (float): Наибольшая обычная доля слов от 5 слогов
+        mtld (float): Наименьшее обычное лексическое разнообразие MTLD
+    """
+
+    words_per_sent: tuple[float, float]
+    letters_per_word: float
+    complex_words: float
+    mtld: float
+
+    def describe(self) -> str:
+        """
+        Признаки ступени для промпта и критики
+
+        Пример использования:
+            >>> LEVEL_NORMS[1].describe()
+            'обычно 7-10 слов в предложении, 4.7 буквы в слове и не больше 2% слов от пяти слогов'
+        """
+        low, high = self.words_per_sent
+        return (
+            f"обычно {low:.0f}-{high:.0f} слов в предложении, {self.letters_per_word:.1f} буквы "
+            f"в слове и не больше {self.complex_words:.0%} слов от пяти слогов"
+        )
+
+
+# Временно здесь, а не в ruTS: текстов в своей ступени хватило только на две младшие
+LEVEL_NORMS = {
+    1: LevelNorm(words_per_sent=(7.2, 10.0), letters_per_word=4.65, complex_words=0.015, mtld=89),
+    4: LevelNorm(words_per_sent=(9.4, 12.8), letters_per_word=5.23, complex_words=0.047, mtld=223),
+}
+
+
+@dataclass(frozen=True)
 class Target:
     """
     Цель адаптации - ступень обучения читателя
@@ -113,6 +158,8 @@ class Target:
         '4-6-й класс (9-11 лет)'
         >>> target.direction(8.5), target.direction(6.0), target.direction(2.0)
         (<Direction.SIMPLIFY: 'simplify'>, <Direction.KEEP: 'keep'>, <Direction.COMPLICATE: 'complicate'>)
+        >>> target.norm.words_per_sent, Target.from_grade(8).norm
+        ((9.4, 12.8), None)
     """
 
     grade: int
@@ -166,6 +213,11 @@ class Target:
         if grade_to_age(grade) == self.level:
             return 0.0
         return grade - self.high if grade > self.high else grade - self.low
+
+    @property
+    def norm(self) -> LevelNorm | None:
+        """Типичные признаки текстов ступени цели; None, если для ступени нет норм"""
+        return LEVEL_NORMS.get(self.low)
 
     def direction(self, grade: float) -> Direction:
         """

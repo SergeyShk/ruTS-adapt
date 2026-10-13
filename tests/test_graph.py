@@ -175,7 +175,12 @@ def test_review_best_candidate():
     graph, context = saved(writer, judge, max_attempts=2)
     assert graph.get_state(CONFIG).interrupts[0].value == {"attempt": 1, "outcome": Outcome.BEST}
     graph.invoke(Command(resume={"feedback": "проще"}), CONFIG, context=context)
-    assert f"<прошлая_попытка>\n{MEDIUM}\n</прошлая_попытка>" in writer.requests[2][1].content
+    prompt = writer.requests[2][1].content
+    assert f"<прошлая_попытка>\n{MEDIUM}\n</прошлая_попытка>" in prompt
+    # Критика к возвращенной попытке 1 видит и более позднюю попытку 2
+    assert "Попытка 1 читается как" in prompt
+    assert "Все попытки:\n1. Сводный класс 25.5: " in prompt
+    assert "\n2. Сводный класс 1.0: " in prompt
 
 
 def test_review_remarks_kept():

@@ -157,14 +157,27 @@ class Reporter:
         self._warn_mtld(chosen)
 
     def _warn_mtld(self, chosen: Attempt) -> None:
-        """Предупреждение о падении лексического разнообразия относительно исходника"""
+        """
+        Предупреждение о падении лексического разнообразия относительно исходника
+
+        Описание:
+            Не выводится, если MTLD не ниже обычного для ступени цели (Target.norm):
+            в текстах для младших читателей слова повторяются чаще, чем во взрослых
+        """
         assert self.source is not None
         drop = mtld_drop(self.source, chosen.measurement)
-        if drop is not None and drop > MTLD_DROP:
-            self._print(
-                f"Предупреждение: лексическое разнообразие (MTLD) упало на {drop:.0%} - "
-                "текст мог стать однообразным"
-            )
+        if drop is None or drop <= MTLD_DROP:
+            return
+        norm = self.target.norm
+        if norm is not None and chosen.measurement.mtld >= norm.mtld:
+            return
+        message = (
+            f"Предупреждение: лексическое разнообразие (MTLD) упало на {drop:.0%} - "
+            "текст мог стать однообразным"
+        )
+        if norm is not None:
+            message += f" (у текстов этого уровня обычно не меньше {norm.mtld:.0f})"
+        self._print(message)
 
     @property
     def _current(self) -> int:

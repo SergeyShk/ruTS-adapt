@@ -2,6 +2,8 @@ import io
 import math
 from dataclasses import replace
 
+import pytest
+
 from ruts_adapt.attempts import Attempt, Outcome, Result
 from ruts_adapt.measure import Target, measure
 from ruts_adapt.report import Reporter, table
@@ -171,6 +173,34 @@ def test_mtld_warning():
         assert last.startswith("Предупреждение: лексическое разнообразие (MTLD) упало на 75%") is (
             warned
         )
+
+
+@pytest.mark.parametrize(("grade", "warned"), [(2, False), (8, True)])
+def test_mtld_warning_norm(grade, warned):
+    """Падение до обычного для ступени MTLD - не повод для предупреждения, без норм - повод"""
+    long_source = replace(measure("Кот спит на окне, а пес лежит у двери. " * 20), mtld=1000.0)
+    text = "Кот спит. Кот спит. " * 50
+    chosen = Attempt(1, text, replace(measure(text), mtld=120.0), KEPT.checks, 0.0, 330)
+    out = io.StringIO()
+    report = Reporter(Target.from_grade(grade), 3, out)
+    report.source, report.attempts = long_source, [chosen]
+    report.finish(Result(Outcome.ACCEPTED, text, chosen))
+    warning = "Предупреждение: лексическое разнообразие (MTLD) упало на 88%"
+    assert (warning in out.getvalue()) is warned
+
+
+def test_mtld_warning_text():
+    """Ниже обычного для ступени: предупреждение называет норму"""
+    long_source = measure("Кот спит на окне, а пес лежит у двери. " * 20)
+    text = "Кот спит. Кот спит. " * 50
+    chosen = Attempt(1, text, measure(text), KEPT.checks, 0.0, 330)
+    report, out = reporter()
+    report.source, report.attempts = replace(long_source, mtld=40.0), [chosen]
+    report.finish(Result(Outcome.ACCEPTED, text, chosen))
+    assert out.getvalue().splitlines()[-1] == (
+        "Предупреждение: лексическое разнообразие (MTLD) упало на 75% - текст мог стать "
+        "однообразным (у текстов этого уровня обычно не меньше 89)"
+    )
 
 
 def test_pause_mtld_warning():
