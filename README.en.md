@@ -137,7 +137,7 @@ export RUTS_ADAPT_JUDGE_MODEL=openai:gpt-5
 | Variable | What it sets | Default |
 | :-- | :-- | :-- |
 | `RUTS_ADAPT_WRITER_MODEL`, `RUTS_ADAPT_JUDGE_MODEL` | the writer's and the judge's model | `anthropic:claude-opus-5-5` |
-| `RUTS_ADAPT_<WRITER\|JUDGE>_EFFORT` | reasoning effort: `low` … `max` for Anthropic, `none` … `max` for OpenAI, `minimal` … `high` for Gemini, `none` … `high` for Ollama; an empty value means the provider's default, and models without effort levels take only an empty value | `high` for the default model, otherwise the provider's default |
+| `RUTS_ADAPT_<WRITER\|JUDGE>_EFFORT` | reasoning effort: `low` … `max` for Anthropic, `none` … `max` for OpenAI, `minimal` … `high` for Gemini, `none` … `high` for Ollama; an empty value means the provider's default, and models without reasoning (`gpt-4.1`, `gpt-4o`) and Gemini models without effort levels take only an empty value | `high` for the default model, otherwise the provider's default |
 | `RUTS_ADAPT_<WRITER\|JUDGE>_MAX_TOKENS` | response limit including reasoning, in tokens | 64,000 for the default model and for Claude models whose limit LangChain does not know, otherwise the provider's default |
 | `RUTS_ADAPT_<WRITER\|JUDGE>_CONTEXT` | context window of an Ollama model, in tokens | 32,768 |
 | `RUTS_ADAPT_FALLBACKS` | Anthropic only: when the model refuses, retry the request on a fallback model, 1 or 0 | 1 |

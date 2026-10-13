@@ -135,7 +135,7 @@ export RUTS_ADAPT_JUDGE_MODEL=openai:gpt-5
 | Переменная | Что задает | По умолчанию |
 | :-- | :-- | :-- |
 | `RUTS_ADAPT_WRITER_MODEL`, `RUTS_ADAPT_JUDGE_MODEL` | модель писателя и судьи | `anthropic:claude-opus-5-5` |
-| `RUTS_ADAPT_<WRITER\|JUDGE>_EFFORT` | усилие рассуждения: `low` … `max` у Anthropic, `none` … `max` у OpenAI, `minimal` … `high` у Gemini, `none` … `high` у Ollama; пустое значение - умолчание провайдера, у моделей без уровней усилия - только пустое | `high` у модели по умолчанию, иначе умолчание провайдера |
+| `RUTS_ADAPT_<WRITER\|JUDGE>_EFFORT` | усилие рассуждения: `low` … `max` у Anthropic, `none` … `max` у OpenAI, `minimal` … `high` у Gemini, `none` … `high` у Ollama; пустое значение - умолчание провайдера, у моделей без рассуждения (`gpt-4.1`, `gpt-4o`) и у Gemini без уровней усилия - только пустое | `high` у модели по умолчанию, иначе умолчание провайдера |
 | `RUTS_ADAPT_<WRITER\|JUDGE>_MAX_TOKENS` | лимит ответа вместе с рассуждением, в токенах | 64 000 у модели по умолчанию и у моделей Claude, лимита которых не знает LangChain, иначе умолчание провайдера |
 | `RUTS_ADAPT_<WRITER\|JUDGE>_CONTEXT` | окно контекста модели Ollama, в токенах | 32 768 |
 | `RUTS_ADAPT_FALLBACKS` | у Anthropic: при отказе модели повторить запрос на резервной модели, 1 или 0 | 1 |

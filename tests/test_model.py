@@ -58,11 +58,12 @@ def test_chat_model_anthropic(keys):
     [
         ModelSettings("anthropic:claude-sonnet-4-5-20250929", None, 32_000),
         ModelSettings("openai:o3", "high", None),
+        ModelSettings("anthropic:claude-haiku-4-5", "low", None),
     ],
-    ids=["claude-dated", "openai-o3"],
+    ids=["claude-dated", "openai-o3", "claude-no-levels"],
 )
 def test_chat_model_profile_gaps(keys, settings):
-    """Пробелы в профилях LangChain не отклоняют рабочие модели: датированный Claude, o-модели"""
+    """Пробелы в профилях LangChain не отклоняют модели: датированный Claude, o3, Claude без уровней"""
     assert chat_model(settings).profile is not None
 
 
@@ -78,7 +79,8 @@ def test_chat_model_vertex(monkeypatch):
 
 def test_chat_model_anthropic_no_profile(keys):
     """Claude без профиля LangChain получает лимит модели по умолчанию, а не 4096 токенов"""
-    model = chat_model(ModelSettings("anthropic:claude-haiku-5-5", None, None))
+    model = chat_model(ModelSettings("anthropic:claude-opus-9-9", None, None))
+    assert model.profile is None
     assert model.max_tokens == 64_000
 
 
