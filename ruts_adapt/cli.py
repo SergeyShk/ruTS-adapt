@@ -1,4 +1,5 @@
 import argparse
+import errno
 import io
 import os
 import re
@@ -293,7 +294,13 @@ def _context(parser: ArgumentParser, settings: Settings) -> Context:
 def _exit_with(result: Result) -> NoReturn:
     """Итоговый текст в stdout и код: 0 - на уровне цели, NOT_ACCEPTED - лучшая непринятая"""
     # Сбросить буфер здесь: при выходе интерпретатора закрытый канал дал бы код 120
-    print(result.text.rstrip("\n"), flush=True)
+    try:
+        print(result.text.rstrip("\n"), flush=True)
+    except OSError as error:
+        # Закрытый канал на Windows - EINVAL, а не EPIPE
+        if error.errno != errno.EINVAL:
+            raise
+        raise BrokenPipeError(errno.EPIPE, "канал закрыт") from error
     sys.exit(NOT_ACCEPTED if result.outcome is Outcome.BEST else 0)
 
 

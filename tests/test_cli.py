@@ -1,3 +1,4 @@
+import errno
 import importlib
 import io
 import os
@@ -669,6 +670,56 @@ def test_bom_crlf(tmp_path, capsys, models, stdin, source):
         stdin(data)
         run(["-g", "2"])
     assert capsys.readouterr().out == "Есть новые правила.\nФирмам дают деньги.\n"
+
+
+class Closed(io.TextIOWrapper):
+    """Вывод в закрытый канал: сброс записанного дает ошибку, как ее дает ОС"""
+
+    error: OSError | None = None
+    written = False
+
+    def write(self, text: str) -> int:
+        self.written = True
+        return super().write(text)
+
+    def flush(self) -> None:
+        if self.written and self.error is not None:
+            raise self.error
+        super().flush()
+
+    def __exit__(self, *args: object) -> None:
+        self.error = None
+        self.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [(BrokenPipeError(errno.EPIPE, "pipe"), 1), (OSError(errno.EINVAL, "invalid"), 1)],
+    ids=["posix", "windows"],
+)
+def test_closed_pipe_platforms(tmp_path, monkeypatch, stdin, error, code):
+    """Закрытый канал - EPIPE на POSIX, EINVAL на Windows: в обоих случаях код 1"""
+    stdin(SIMPLE.encode())
+    with (
+        Closed((tmp_path / "out").open("wb"), encoding="utf-8") as stdout,
+        (tmp_path / "err").open("w") as stderr,
+    ):
+        stdout.error = error
+        monkeypatch.setattr(sys, "stdout", stdout)
+        monkeypatch.setattr(sys, "stderr", stderr)
+        with pytest.raises(SystemExit) as info:
+            main(["-g", "2"])
+    assert info.value.code == code
+
+
+def test_output_error(tmp_path, monkeypatch, stdin):
+    """Другая ошибка вывода - не закрытый канал: она не прячется"""
+    stdin(SIMPLE.encode())
+    with Closed((tmp_path / "out").open("wb"), encoding="utf-8") as stdout:
+        stdout.error = OSError(errno.ENOSPC, "No space left on device")
+        monkeypatch.setattr(sys, "stdout", stdout)
+        with pytest.raises(OSError, match="No space left"):
+            main(["-g", "2"])
 
 
 def test_broken_pipe(tmp_path, monkeypatch, stdin):
