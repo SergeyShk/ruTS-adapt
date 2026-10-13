@@ -12,7 +12,7 @@ from .tasks import FactCheck, FactStatus
 
 STATE_TYPES = (Target, Measurement, FactCheck, FactStatus, Attempt, Outcome, Result)
 # Увеличивать при изменении полей State и классов из STATE_TYPES: старые потоки так не восстановить
-STATE_VERSION = 1
+STATE_VERSION = 2
 DATABASE = "checkpoints.sqlite"
 
 

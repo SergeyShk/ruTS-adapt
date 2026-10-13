@@ -52,6 +52,7 @@ class State(TypedDict):
         feedback (str | None): Замечание человека к кандидату на итог; None - принят
         remarks (list[str]): Все замечания человека; узел добавляет к списку
         rejected (list[int]): Номера попыток, которые вернул человек; узел добавляет к списку
+        rejected_after (int): Число попыток при последнем возврате: итог - только из более поздних
         version (int): Версия формата сохраненного состояния
         result (Result): Итог
     """
@@ -73,6 +74,7 @@ class State(TypedDict):
     feedback: NotRequired[str | None]
     remarks: NotRequired[Annotated[list[str], operator.add]]
     rejected: NotRequired[Annotated[list[int], operator.add]]
+    rejected_after: NotRequired[int]
     version: NotRequired[int]
     result: NotRequired[Result]
 
@@ -157,13 +159,18 @@ def review(state: State) -> dict[str, Any]:
         передает {"feedback": None}, чтобы принять, или {"feedback": "замечание"},
         чтобы переписать кандидата с этим замечанием, даже сверх лимита попыток
     """
-    result = candidate(state["attempts"], state.get("rejected"))
+    result = candidate(state["attempts"], state.get("rejected_after", 0))
     assert result.attempt is not None
     decision = interrupt({"attempt": result.attempt.number, "outcome": result.outcome})
     feedback = decision["feedback"]
     if not feedback:
         return {"feedback": None}
-    return {"feedback": feedback, "remarks": [feedback], "rejected": [result.attempt.number]}
+    return {
+        "feedback": feedback,
+        "remarks": [feedback],
+        "rejected": [result.attempt.number],
+        "rejected_after": len(state["attempts"]),
+    }
 
 
 def after_review(state: State) -> Literal["finish", "critique"]:
@@ -194,11 +201,11 @@ def criticize(state: State) -> dict[str, Any]:
 
 
 def finish(state: State) -> dict[str, Any]:
-    """Итог: исходник уже на уровне, принятая попытка или лучшая из всех"""
+    """Итог: исходник уже на уровне, принятая попытка или лучшая после последнего возврата"""
     attempts = state.get("attempts", [])
     if not attempts:
         return {"result": Result(Outcome.ON_LEVEL, state["source"], None)}
-    return {"result": candidate(attempts, state.get("rejected"))}
+    return {"result": candidate(attempts, state.get("rejected_after", 0))}
 
 
 def build_graph(

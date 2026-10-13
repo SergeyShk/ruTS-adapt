@@ -554,7 +554,7 @@ def test_old_version(capsys, models, stdin, monkeypatch):
     stdin(DECREE.encode())
     models(*fakes())
     main(["-g", "2", "-r", "-t", "old"])
-    monkeypatch.setattr(cli, "STATE_VERSION", 2)
+    monkeypatch.setattr(cli, "STATE_VERSION", cli.STATE_VERSION + 1)
     error = fail(capsys, ["-t", "old", "--approve"])
     assert error.endswith(
         "ruts-adapt: ошибка: поток old сохранен другой версией ruts-adapt: начните новый поток\n"
