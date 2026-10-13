@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 from ruts import LexicalStats
@@ -11,7 +12,7 @@ OUTCOMES = {Outcome.ON_LEVEL: "уже на уровне", Outcome.ACCEPTED: "п�
 
 @dataclass(frozen=True)
 class Run:
-    """Живой прогон одного текста для отчета"""
+    """Живой прогон одного текста для отчета; result - None, если граф упал с ошибкой error"""
 
     case: str
     genre: str
@@ -20,8 +21,9 @@ class Run:
     source_measurement: Measurement
     facts: int
     attempts: list[Attempt]
-    result: Result
+    result: Result | None
     tokens: int
+    error: str | None = None
 
 
 def rare_words(text: str) -> float:
@@ -38,7 +40,17 @@ def report(runs: list[Run]) -> str:
     ]
     for run in runs:
         source = run.source_measurement
-        final = run.result.attempt.measurement if run.result.attempt else source
+        if run.result is not None:
+            chosen = run.result.attempt
+            outcome = OUTCOMES[run.result.outcome] + (
+                f", попытка {chosen.number}" if chosen else ""
+            )
+            final_text = run.result.text
+        else:
+            chosen = run.attempts[-1] if run.attempts else None
+            outcome = f"ошибка: {run.error}"
+            final_text = chosen.text if chosen else run.source
+        final = chosen.measurement if chosen else source
         grades = " → ".join(f"{attempt.measurement.grade:.1f}" for attempt in run.attempts)
         facts = " → ".join(
             "/".join(
@@ -47,13 +59,17 @@ def report(runs: list[Run]) -> str:
             )
             for attempt in run.attempts
         )
-        chosen = f", попытка {run.result.attempt.number}" if run.result.attempt else ""
         lines.append(
             f"| {run.case} | {run.genre} | {run.target.level} | {source.grade:.1f} "
             f"| {grades or '-'} | {facts or '-'} (из {run.facts}) "
-            f"| {OUTCOMES[run.result.outcome]}{chosen} "
+            f"| {outcome} "
             f"| {source.words_per_sent:.1f} → {final.words_per_sent:.1f} "
-            f"| {rare_words(run.source):.0%} → {rare_words(run.result.text):.0%} "
-            f"| {source.mtld:.0f} → {final.mtld:.0f} | {run.tokens} |"
+            f"| {rare_words(run.source):.0%} → {rare_words(final_text):.0%} "
+            f"| {_mtld(source.mtld)} → {_mtld(final.mtld)} | {run.tokens} |"
         )
     return "\n".join(lines)
+
+
+def _mtld(value: float) -> str:
+    """MTLD для таблицы: inf, когда в тексте нет повторяющихся слов, - прочерк, как в команде"""
+    return f"{value:.0f}" if math.isfinite(value) else "-"

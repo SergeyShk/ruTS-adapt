@@ -11,6 +11,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from langchain_core.callbacks import get_usage_metadata_callback
@@ -18,7 +19,7 @@ from ruts.datasets import SovChLit, TextsByGrade
 
 from ruts_adapt.attempts import Outcome
 from ruts_adapt.graph import Context, build_graph
-from ruts_adapt.measure import Target
+from ruts_adapt.measure import Target, measure
 from ruts_adapt.model import chat_model
 from ruts_adapt.settings import Settings
 from tests.live_report import Run
@@ -124,29 +125,40 @@ def context() -> Context:
 
 @pytest.mark.parametrize("case", CASES, ids=[case.slug for case in CASES])
 def test_live(case, context, live_runs):
-    """Граф доходит до итога, и итог не дальше от цели, чем исходник"""
+    """Граф доходит до итога, и итог ближе к цели, чем исходник"""
     text = case.load()
     target = Target.from_grade(case.grade)
-    state = {"source": text, "target": target, "max_attempts": 3}
+    initial: dict[str, Any] = {"source": text, "target": target, "max_attempts": 3}
+    state = initial
+    error = None
     with get_usage_metadata_callback() as usage:
-        state = build_graph().invoke(state, context=context)
-    tokens = sum(
-        item["input_tokens"] + item["output_tokens"] for item in usage.usage_metadata.values()
-    )
+        # Поток состояний: если граф упадет, в отчет попадут сделанные попытки и токены
+        try:
+            for values in build_graph().stream(initial, context=context, stream_mode="values"):
+                state = values
+        except Exception as failure:
+            error = f"{type(failure).__name__}: {failure}"
+            raise
+        finally:
+            tokens = sum(
+                item["input_tokens"] + item["output_tokens"]
+                for item in usage.usage_metadata.values()
+            )
+            live_runs.append(
+                Run(
+                    case.name,
+                    case.genre,
+                    target,
+                    text,
+                    state.get("source_measurement") or measure(text),
+                    len(state.get("facts", [])),
+                    state.get("attempts", []),
+                    state.get("result"),
+                    tokens,
+                    error,
+                )
+            )
     result = state["result"]
-    live_runs.append(
-        Run(
-            case.name,
-            case.genre,
-            target,
-            text,
-            state["source_measurement"],
-            len(state.get("facts", [])),
-            state.get("attempts", []),
-            result,
-            tokens,
-        )
-    )
     source_gap = target.gap(state["source_measurement"].grade)
     if result.outcome is Outcome.ON_LEVEL:
         assert source_gap == 0
