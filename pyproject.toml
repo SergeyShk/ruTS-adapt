@@ -47,7 +47,7 @@ dependencies = [
     "openai>=2.45,<4",
     "platformdirs>=4",
     "pydantic>=2",
-    "ruts>=0.16,<0.17",
+    "ruts>=0.18,<0.19",
 ]
 
 [project.scripts]
