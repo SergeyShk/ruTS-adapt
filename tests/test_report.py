@@ -210,7 +210,7 @@ def test_mtld_warning_text():
     report.finish(Result(Outcome.ACCEPTED, text, chosen))
     assert out.getvalue().splitlines()[-1] == (
         "Предупреждение: лексическое разнообразие (MTLD) упало на 75% - текст мог стать "
-        "однообразным (у текстов этого уровня обычно не меньше 89)"
+        "однообразным (у текстов этого уровня обычно не меньше 104)"
     )
 
 

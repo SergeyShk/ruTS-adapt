@@ -174,14 +174,14 @@ class Reporter:
         if drop is None or drop <= MTLD_DROP:
             return
         norm = self.target.norm
-        if norm is not None and chosen.measurement.mtld >= norm.mtld:
+        if norm is not None and chosen.measurement.mtld >= norm["mtld"][0]:
             return
         message = (
             f"Предупреждение: лексическое разнообразие (MTLD) упало на {drop:.0%} - "
             "текст мог стать однообразным"
         )
         if norm is not None:
-            message += f" (у текстов этого уровня обычно не меньше {norm.mtld:.0f})"
+            message += f" (у текстов этого уровня обычно не меньше {norm['mtld'][0]:.0f})"
         self._print(message)
 
     @property

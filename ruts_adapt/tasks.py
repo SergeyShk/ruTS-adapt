@@ -164,8 +164,9 @@ def rewrite(
         f"{number(measurement.letters_per_word, 2)} буквы в слове, "
         f"{measurement.complex_words:.0%} слов от пяти слогов."
     )
-    if target.norm is not None:
-        task += f" В текстах для этого уровня {target.norm.describe()}."
+    norm = target.describe_norm()
+    if norm is not None:
+        task += f" В текстах для этого уровня {norm}."
     parts = [task, _tagged("исходный_текст", source), _tagged("факты", _numbered(facts))]
     if previous is not None:
         parts.append(_tagged("прошлая_попытка", previous))

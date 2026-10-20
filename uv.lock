@@ -74,7 +74,7 @@ wheels = [
 
 [[package]]
 name = "anyts"
-version = "0.2.9"
+version = "0.3.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "graphviz" },
@@ -86,9 +86,9 @@ dependencies = [
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "spacy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/bd/22eb4d8b9ba1ba716a8d40790236b9e08891b14ef6f2bc8ec005a168a095/anyts-0.2.9.tar.gz", hash = "sha256:88bd383e17538a82227d894f45e39efe0433e185b97670e2e569e04ca5f75825", size = 101555, upload-time = "2026-10-05T06:01:02.752Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/ab/0080d6a333988dcc2e61c423d122bf52a3ee33a38efd3d64e9c5e3cf8b65/anyts-0.3.6.tar.gz", hash = "sha256:3ac72eedf1a351c07baf727f34e3efbfd9722771d6c381e1e30dd6477f80f7a9", size = 153053, upload-time = "2026-10-19T23:33:10.646Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/09/9841725e2a6cd3a43561fd6f246b0ee3f9274f272c10a38439e89752de71/anyts-0.2.9-py3-none-any.whl", hash = "sha256:fe428ac35b67dbe07533dc5e6969e8020fe242c60d67956db501006871d825d1", size = 118128, upload-time = "2026-10-05T06:01:01.699Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/58/4fc77d58e0cc93d383eed7d7e27048adf1dbba6ae9022655e5accb1996c5/anyts-0.3.6-py3-none-any.whl", hash = "sha256:f720cafca4da9aae965159c508ee727eb3ad4439099a49875d6a153243df4968", size = 173983, upload-time = "2026-10-19T23:33:09.131Z" },
 ]
 
 [[package]]
@@ -1126,8 +1126,8 @@ name = "httpcore2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "python_full_version < '3.12' or python_full_version >= '3.15' or sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "python_full_version < '3.12' or python_full_version >= '3.15' or sys_platform != 'emscripten'" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cb/f3/1db7aa2bc2524062192bb0e0323969492d1883152a232fe36eea65f4e35c/httpcore2-2.13.1.tar.gz", hash = "sha256:e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103", size = 68071, upload-time = "2026-09-23T07:47:22.372Z" }
 wheels = [
@@ -3238,7 +3238,7 @@ wheels = [
 
 [[package]]
 name = "ruts"
-version = "0.16.0"
+version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyts" },
@@ -3254,9 +3254,9 @@ dependencies = [
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "spacy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/b0/7562e292e3cc09d938a9b1644ce6efbcfdaf1ff6efa15ab3de050544649a/ruts-0.16.0.tar.gz", hash = "sha256:6ac67054c130a14a1c85d859103f1132e933cf5c287bf67f727a8c7a1d3ae4b8", size = 244844, upload-time = "2026-10-09T22:25:44.762Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/30/314dda689d7524ff16457e561ce539907496f34add951dd71d5d4f292ac1/ruts-0.18.0.tar.gz", hash = "sha256:038cdf6d91e3d5b4d2b040fe81668b86b88f8a1aea308411bac66a96756fe324", size = 251906, upload-time = "2026-10-20T02:37:58.903Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/ec/a2d8fa20343b832ce8b7d797661287c0d230d8452a442889dc15d89a7d4b/ruts-0.16.0-py3-none-any.whl", hash = "sha256:f2f6ab00914ae3f5bfca4109e1f7c64d1ec6291071e9e3edaba1de9d25549cf2", size = 256091, upload-time = "2026-10-09T22:25:42.932Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/88/a7d3c92eb089ca3354371bdba7bb015182a9aa0335a68c97b4608f1303bf/ruts-0.18.0-py3-none-any.whl", hash = "sha256:ba8a0eaebc8268a96463338a54f4d9ec54655d6a294358191a6c0edc0991b772", size = 263753, upload-time = "2026-10-20T02:37:57.387Z" },
 ]
 
 [[package]]
@@ -3307,7 +3307,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.45,<4" },
     { name = "platformdirs", specifier = ">=4" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "ruts", specifier = ">=0.16,<0.17" },
+    { name = "ruts", specifier = ">=0.18,<0.19" },
 ]
 
 [package.metadata.requires-dev]
