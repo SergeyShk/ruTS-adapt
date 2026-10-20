@@ -1,6 +1,6 @@
 [project]
 name = "ruts-adapt"
-version = "0.1.0"
+version = "0.1.1"
 description = "Adapting Russian texts to a reader's grade level: a LangGraph graph where a model rewrites the text, ruTS measures its level and an LLM judge checks the meaning"
 readme = "README.md"
 requires-python = ">=3.11"
