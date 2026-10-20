@@ -2,7 +2,7 @@ import math
 
 import pytest
 from ruts import BasicStats, DiversityStats, ReadabilityStats, SourceError
-from ruts.readability_stats import grade_to_age
+from ruts.readability_stats import grade_to_age, level_norms
 
 from ruts_adapt.measure import MAX_GRADE, MIN_GRADE, Direction, Target, measure
 
@@ -116,3 +116,12 @@ def test_direction_texts():
     target = Target.from_grade(5)
     assert target.direction(measure(DECREE).grade) is Direction.SIMPLIFY
     assert target.direction(measure(TALE).grade) is Direction.COMPLICATE
+
+
+@pytest.mark.parametrize(("grade", "norm"), [(2, True), (6, True), (8, False), (11, False)])
+def test_target_norm(grade, norm):
+    """Нормы ruTS - у 1-3 и 4-6-го класса; у 10-11-го они в ruTS есть, но граф их не берет"""
+    target = Target.from_grade(grade)
+    assert target.norm == (level_norms(grade) if norm else None)
+    assert (target.describe_norm() is not None) is norm
+    assert level_norms(11) is not None

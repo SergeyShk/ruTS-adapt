@@ -94,8 +94,8 @@ def test_critique_too_complex():
         "цель - «1-3-й класс (6-8 лет)»: текст сложнее цели на 22,5 класса.",
         "Сейчас в среднем 13,0 слова в предложении (в исходном 18,0), 4,00 слога и 9,08 буквы "
         "в слове (3,61 и 8,33), 46% слов от пяти слогов (50%).",
-        "В текстах для этого уровня обычно 7,2-10,0 слова в предложении, 4,7 буквы в слове "
-        "и не больше 1,5% слов от пяти слогов.",
+        "В текстах для этого уровня обычно 8,1-10,7 слова в предложении, 4,56-5,03 буквы "
+        "в слове и не больше 2,2% слов от пяти слогов.",
         "Делите длинные предложения и заменяйте длинные и многосложные слова короткими.",
     ]
 
@@ -104,7 +104,7 @@ def test_critique_short_sentences_complex():
     """Сложный текст с короткими предложениями: упрощать слова, а не дробить фразы"""
     current = attempt(text=TERMS)
     assert current.gap > 0
-    assert current.measurement.words_per_sent <= TARGET.norm.words_per_sent[1]
+    assert current.measurement.words_per_sent <= TARGET.norm["words_per_sent"][1]
     text = critique(current, [current], measure(DECREE), TARGET, FACTS)
     assert text.splitlines()[-1] == (
         "Предложения уже не длиннее, чем в текстах этого уровня: не дробите их дальше, "
@@ -183,7 +183,7 @@ def test_critique_long_sentences_simple():
     target = Target.from_grade(5)
     current = attempt(text=PLAIN, gap=target.gap(measure(PLAIN).grade))
     assert current.gap < 0
-    assert current.measurement.words_per_sent >= target.norm.words_per_sent[0]
+    assert current.measurement.words_per_sent >= target.norm["words_per_sent"][0]
     text = critique(current, [current], measure(DECREE), target, FACTS)
     assert text.splitlines()[-1] == (
         "Предложения уже не короче, чем в текстах этого уровня: не объединяйте их дальше, "
@@ -225,7 +225,7 @@ def test_critique_between():
 def test_critique_between_norm():
     """Ступень с нормами: ориентир - нормы, признаков между попытками нет, история есть"""
     text = between(5)
-    assert "В текстах для этого уровня обычно 9,4-12,8 слова" in text
+    assert "В текстах для этого уровня обычно 10,2-14,6 слова" in text
     assert "между ними" not in text
     assert "Все попытки:" in text
 

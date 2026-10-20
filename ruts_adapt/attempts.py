@@ -2,15 +2,16 @@ import math
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .measure import LEVEL_NORMS, Measurement, Target, number
+from ruts.constants import LEVEL_NORMS
+
+from .measure import Measurement, Target, number
 from .tasks import FactCheck, FactStatus
 
 MTLD_DROP = 0.3
 MTLD_MIN_WORDS = 100
-# Для ступеней без норм (выше 4-6) предложение не длиннее верхней границы нормы 4-6 - уже короткое
-SHORT_SENTENCE = LEVEL_NORMS[4].words_per_sent[1]
-# Верхний квартиль длины предложения в текстах 10-11-го класса TextsByGrade
-LONG_SENTENCE = 18.5
+# Ступени без норм: предложение короткое до верхней границы нормы 4-6, длинное - от нее же у 10-11
+SHORT_SENTENCE = LEVEL_NORMS[4]["words_per_sent"][1]
+LONG_SENTENCE = LEVEL_NORMS[10]["words_per_sent"][1]
 
 
 @dataclass(frozen=True)
@@ -175,8 +176,9 @@ def critique(
             f"({number(source.syllables_per_word, 2)} и {number(source.letters_per_word, 2)}), "
             f"{current.complex_words:.0%} слов от пяти слогов ({source.complex_words:.0%})."
         )
-        if target.norm is not None:
-            lines.append(f"В текстах для этого уровня {target.norm.describe()}.")
+        norm = target.describe_norm()
+        if norm is not None:
+            lines.append(f"В текстах для этого уровня {norm}.")
         # С нормами ориентир дают они: признаки между попытками могли бы им противоречить
         between = None if target.norm else _between(attempts, target)
         lines.append(between or _advice(attempt, target))
@@ -206,16 +208,19 @@ def _advice(attempt: Attempt, target: Target) -> str:
     words = attempt.measurement.words_per_sent
     norm = target.norm
     if attempt.gap > 0:
-        if words <= (norm.words_per_sent[1] if norm else SHORT_SENTENCE):
+        if words <= (norm["words_per_sent"][1] if norm else SHORT_SENTENCE):
             already = "не длиннее, чем в текстах этого уровня" if norm else "короткие"
             return (
                 f"Предложения уже {already}: не дробите их дальше, "
                 "а заменяйте длинные слова и термины короткими и простыми."
             )
-        if norm is not None and attempt.measurement.letters_per_word <= norm.letters_per_word:
+        if (
+            norm is not None
+            and attempt.measurement.letters_per_word <= norm["letters_per_word"][1]
+        ):
             return "Слова уже не длиннее, чем в текстах этого уровня: делите длинные предложения."
         return "Делите длинные предложения и заменяйте длинные и многосложные слова короткими."
-    if norm is not None and words < norm.words_per_sent[0]:
+    if norm is not None and words < norm["words_per_sent"][0]:
         return "Предложения короче, чем в текстах этого уровня: объединяйте их."
     if norm is not None or words >= LONG_SENTENCE:
         already = "не короче, чем в текстах этого уровня" if norm else "длинные"

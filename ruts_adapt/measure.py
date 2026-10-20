@@ -1,14 +1,16 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ruts import BasicStats, DiversityStats, ReadabilityStats
+from ruts import BasicStats, ReadabilityStats
 from ruts.constants import GRADE_AGE_LEVELS
-from ruts.readability_stats import grade_to_age
+from ruts.readability_stats import grade_to_age, level_features, level_norms
 
 MIN_GRADE = GRADE_AGE_LEVELS[0][0]
 MAX_GRADE = GRADE_AGE_LEVELS[-1][1]
 # На тексте короче сводный класс неустойчив: слияние двух предложений нередко меняет ступень
 STABLE_WORDS = 100
+# Нормы ruTS для 10-11-го класса граф не берет: тексты в них сводный класс относит к 4-6 и 7-9
+NORM_LEVELS = (1, 4)
 
 
 def number(value: float, digits: int = 1) -> str:
@@ -96,65 +98,18 @@ def measure(text: str) -> Measurement:
     """
     bs = BasicStats(text)
     rs = ReadabilityStats(bs)
-    n_words = bs.n_words
+    features = level_features(text)
     return Measurement(
         grade=rs.consensus_grade,
         level=rs.describe_grade(),
-        n_words=n_words,
+        n_words=bs.n_words,
         n_sents=bs.n_sents,
-        words_per_sent=n_words / bs.n_sents,
-        syllables_per_word=bs.n_syllables / n_words,
-        # Буквы только учтенных слов, как в формулах ruTS, а не всего текста
-        letters_per_word=sum(n * count for n, count in bs.c_letters.items()) / n_words,
-        complex_words=bs.count_words_by_syllables(rs.smog_complex_syl_factor) / n_words,
-        mtld=DiversityStats(text).mtld,
+        words_per_sent=features["words_per_sent"],
+        syllables_per_word=bs.n_syllables / bs.n_words,
+        letters_per_word=features["letters_per_word"],
+        complex_words=features["p_smog_complex_words"],
+        mtld=features["mtld"],
     )
-
-
-@dataclass(frozen=True)
-class LevelNorm:
-    """
-    Типичные признаки текстов ступени обучения
-
-    Описание:
-        Признаки текстов наборов ruTS SovChLit и TextsByGrade с меткой класса
-        ступени, которые сводный класс ruTS относит к ней же: квартили длины
-        предложения, медиана длины слова, верхний квартиль доли сложных слов
-        и нижний квартиль MTLD текстов от 100 слов
-
-    Атрибуты:
-        words_per_sent (tuple[float, float]): Длина предложения в словах: от и до
-        letters_per_word (float): Длина слова в буквах
-        complex_words (float): Наибольшая обычная доля слов от 5 слогов
-        mtld (float): Наименьшее обычное лексическое разнообразие MTLD
-    """
-
-    words_per_sent: tuple[float, float]
-    letters_per_word: float
-    complex_words: float
-    mtld: float
-
-    def describe(self) -> str:
-        """
-        Признаки ступени для промпта и критики
-
-        Пример использования:
-            >>> LEVEL_NORMS[1].describe()
-            'обычно 7,2-10,0 слова в предложении, 4,7 буквы в слове и не больше 1,5% слов от пяти слогов'
-        """
-        low, high = self.words_per_sent
-        return (
-            f"обычно {number(low)}-{number(high)} слова в предложении, "
-            f"{number(self.letters_per_word)} буквы в слове и не больше "
-            f"{number(100 * self.complex_words)}% слов от пяти слогов"
-        )
-
-
-# Временно здесь, а не в ruTS: текстов в своей ступени хватило только на две младшие
-LEVEL_NORMS = {
-    1: LevelNorm(words_per_sent=(7.2, 10.0), letters_per_word=4.65, complex_words=0.015, mtld=89),
-    4: LevelNorm(words_per_sent=(9.4, 12.8), letters_per_word=5.23, complex_words=0.047, mtld=223),
-}
 
 
 @dataclass(frozen=True)
@@ -165,7 +120,8 @@ class Target:
     Описание:
         Класс читателя относится к своей ступени таблицы ruTS GRADE_AGE_LEVELS:
         1-3, 4-6, 7-9, 10-11-й класс, 1-3 и 4-6-й курс вуза (годы обучения 12-17).
-        Текст на уровне, если ruTS прочитывает его сводный класс как эту ступень
+        Текст на уровне, если ruTS прочитывает его сводный класс как эту ступень.
+        Нормы признаков ступени - из ruTS (level_norms), только для 1-3 и 4-6-го класса
 
     Атрибуты:
         grade (int): Класс читателя
@@ -179,8 +135,8 @@ class Target:
         '4-6-й класс (9-11 лет)'
         >>> target.direction(8.5), target.direction(6.0), target.direction(2.0)
         (<Direction.SIMPLIFY: 'simplify'>, <Direction.KEEP: 'keep'>, <Direction.COMPLICATE: 'complicate'>)
-        >>> target.norm.words_per_sent, Target.from_grade(8).norm
-        ((9.4, 12.8), None)
+        >>> target.norm["words_per_sent"], Target.from_grade(8).norm, Target.from_grade(10).norm
+        ((10.2, 14.6), None, None)
     """
 
     grade: int
@@ -236,9 +192,31 @@ class Target:
         return grade - self.high if grade > self.high else grade - self.low
 
     @property
-    def norm(self) -> LevelNorm | None:
-        """Типичные признаки текстов ступени цели; None, если для ступени нет норм"""
-        return LEVEL_NORMS.get(self.low)
+    def norm(self) -> dict[str, tuple[float, float]] | None:
+        """Нормы признаков ступени цели по ключам level_features; None, если норм нет"""
+        return level_norms(self.grade) if self.low in NORM_LEVELS else None
+
+    def describe_norm(self) -> str | None:
+        """
+        Нормы ступени цели для промпта и критики
+
+        Вывод:
+            str | None: Обычные длина предложения и слова и наибольшая обычная доля
+                слов от пяти слогов; None, если норм нет
+
+        Пример использования:
+            >>> Target.from_grade(2).describe_norm()
+            'обычно 8,1-10,7 слова в предложении, 4,56-5,03 буквы в слове и не больше 2,2% слов от пяти слогов'
+        """
+        norm = self.norm
+        if norm is None:
+            return None
+        words, letters = norm["words_per_sent"], norm["letters_per_word"]
+        return (
+            f"обычно {number(words[0])}-{number(words[1])} слова в предложении, "
+            f"{number(letters[0], 2)}-{number(letters[1], 2)} буквы в слове и не больше "
+            f"{number(100 * norm['p_smog_complex_words'][1])}% слов от пяти слогов"
+        )
 
     def direction(self, grade: float) -> Direction:
         """
