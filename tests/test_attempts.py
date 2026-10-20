@@ -191,6 +191,52 @@ def test_critique_long_sentences_simple():
     )
 
 
+@pytest.mark.parametrize(
+    ("grade", "gap", "features", "advice"),
+    [
+        (
+            2,
+            1.0,
+            {"words_per_sent": 10.5},
+            "Предложения уже не длиннее, чем в текстах этого уровня: не дробите их дальше, "
+            "а заменяйте длинные слова и термины короткими и простыми.",
+        ),
+        (
+            2,
+            1.0,
+            {"words_per_sent": 12.0, "letters_per_word": 5.0},
+            "Слова уже не длиннее, чем в текстах этого уровня: делите длинные предложения.",
+        ),
+        (
+            8,
+            1.0,
+            {"words_per_sent": 14.5},
+            "Предложения уже короткие: не дробите их дальше, "
+            "а заменяйте длинные слова и термины короткими и простыми.",
+        ),
+        (
+            10,
+            -1.0,
+            {"words_per_sent": 17.5},
+            "Объединяйте короткие предложения и используйте более точные и длинные слова.",
+        ),
+        (
+            10,
+            -1.0,
+            {"words_per_sent": 18.0},
+            "Предложения уже длинные: не объединяйте их дальше, "
+            "а используйте более точные и длинные слова.",
+        ),
+    ],
+    ids=["words-q3", "letters-q3", "short-sentence", "below-long", "long-sentence"],
+)
+def test_advice_thresholds(grade, gap, features, advice):
+    """Пороги совета у самых границ: верх нормы ступени, без норм - SHORT_SENTENCE и LONG_SENTENCE"""
+    current = Attempt(1, SIMPLE, replace(SIMPLE_M, **features), KEPT.checks, gap, 330)
+    text = critique(current, [current], measure(DECREE), Target.from_grade(grade), FACTS)
+    assert text.splitlines()[-1] == advice
+
+
 def between(grade):
     """Критика попытки 3 из трех: 2 и 1 сложнее ступени цели, 3 проще"""
     target = Target.from_grade(grade)

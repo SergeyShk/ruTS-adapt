@@ -120,8 +120,13 @@ def test_direction_texts():
 
 @pytest.mark.parametrize(("grade", "norm"), [(2, True), (6, True), (8, False), (11, False)])
 def test_target_norm(grade, norm):
-    """Нормы ruTS - у 1-3 и 4-6-го класса; у 10-11-го они в ruTS есть, но граф их не берет"""
+    """Нормы ruTS - только у 1-3 и 4-6-го класса"""
     target = Target.from_grade(grade)
     assert target.norm == (level_norms(grade) if norm else None)
     assert (target.describe_norm() is not None) is norm
+
+
+def test_target_norm_ignored():
+    """Нормы 10-11-го класса в ruTS есть, но граф их не берет"""
     assert level_norms(11) is not None
+    assert Target.from_grade(11).norm is None
