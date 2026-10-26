@@ -21,7 +21,7 @@ body:
     attributes:
       label: Версии ruTS-adapt и ruTS
       description: "`uv run ruts-adapt --version`"
-      placeholder: "ruts-adapt 0.1.0, ruts 0.16.0"
+      placeholder: "ruts-adapt 0.1.1, ruts 0.19.0"
     validations:
       required: true
   - type: input

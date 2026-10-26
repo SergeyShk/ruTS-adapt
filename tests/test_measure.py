@@ -42,6 +42,16 @@ def test_measure_order():
     assert tale.complex_words < decree.complex_words
 
 
+@pytest.mark.parametrize("separator", ["\u2029", "\u2028\u2028", "\n\u200b\n"])
+def test_measure_paragraph_separators(separator):
+    """Разделитель абзацев Unicode, как и пустая строка, завершает предложение заголовка без точки"""
+    text = separator.join(
+        ["Глава первая", "Кот сидел на окне и смотрел на птиц.", "Глава вторая", "Птицы улетели."]
+    )
+    assert measure(text) == measure(text.replace(separator, "\n\n"))
+    assert measure(text).n_sents == 4
+
+
 def test_measure_mtld_no_repeats():
     """MTLD текста без повторяющихся слов не определен: ruts дает inf, с одним повтором - число"""
     assert measure("Кот спит. Кот ест.").mtld == pytest.approx(4.48)
