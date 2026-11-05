@@ -2,8 +2,17 @@ import math
 from dataclasses import replace
 
 import pytest
+from ruts.constants import LEVEL_NORMS
 
-from ruts_adapt.attempts import Attempt, Outcome, Result, best, candidate, critique, mtld_drop
+from ruts_adapt.attempts import (
+    Attempt,
+    Outcome,
+    Result,
+    best,
+    candidate,
+    critique,
+    mtld_drop,
+)
 from ruts_adapt.measure import Target, measure, number
 from ruts_adapt.tasks import FactCheck, FactStatus
 from tests.samples import DECREE, FACTS, KEPT, MEDIUM, SIMPLE, verdict
@@ -94,8 +103,8 @@ def test_critique_too_complex():
         "цель - «1-3-й класс (6-8 лет)»: текст сложнее цели на 22,5 класса.",
         "Сейчас в среднем 13,0 слова в предложении (в исходном 18,0), 4,00 слога и 9,08 буквы "
         "в слове (3,61 и 8,33), 46% слов от пяти слогов (50%).",
-        "В текстах для этого уровня обычно 8,1-10,7 слова в предложении, 4,56-5,03 буквы "
-        "в слове и не больше 2,2% слов от пяти слогов.",
+        "В текстах для этого уровня обычно 7,6-10,3 слова в предложении, 4,54-5,01 буквы "
+        "в слове и не больше 2,1% слов от пяти слогов.",
         "Делите длинные предложения и заменяйте длинные и многосложные слова короткими.",
     ]
 
@@ -197,41 +206,69 @@ def test_critique_long_sentences_simple():
         (
             2,
             1.0,
-            {"words_per_sent": 10.5},
+            {"words_per_sent": LEVEL_NORMS[1]["words_per_sent"][1]},
             "Предложения уже не длиннее, чем в текстах этого уровня: не дробите их дальше, "
             "а заменяйте длинные слова и термины короткими и простыми.",
         ),
         (
             2,
             1.0,
-            {"words_per_sent": 12.0, "letters_per_word": 5.0},
+            {"words_per_sent": 12.0, "letters_per_word": LEVEL_NORMS[1]["letters_per_word"][1]},
             "Слова уже не длиннее, чем в текстах этого уровня: делите длинные предложения.",
         ),
         (
             8,
             1.0,
-            {"words_per_sent": 14.5},
+            {"words_per_sent": LEVEL_NORMS[4]["words_per_sent"][1]},
             "Предложения уже короткие: не дробите их дальше, "
             "а заменяйте длинные слова и термины короткими и простыми.",
         ),
         (
+            8,
+            1.0,
+            {"words_per_sent": LEVEL_NORMS[4]["words_per_sent"][1] + 0.1},
+            "Делите длинные предложения и заменяйте длинные и многосложные слова короткими.",
+        ),
+        (
             10,
             -1.0,
-            {"words_per_sent": 17.5},
+            {"words_per_sent": LEVEL_NORMS[10]["words_per_sent"][1] - 0.1},
             "Объединяйте короткие предложения и используйте более точные и длинные слова.",
         ),
         (
             10,
             -1.0,
-            {"words_per_sent": 18.0},
+            {"words_per_sent": LEVEL_NORMS[10]["words_per_sent"][1]},
             "Предложения уже длинные: не объединяйте их дальше, "
             "а используйте более точные и длинные слова.",
         ),
+        (
+            2,
+            -1.0,
+            {"words_per_sent": LEVEL_NORMS[1]["words_per_sent"][0]},
+            "Предложения уже не короче, чем в текстах этого уровня: не объединяйте их дальше, "
+            "а используйте более точные и длинные слова.",
+        ),
+        (
+            2,
+            -1.0,
+            {"words_per_sent": LEVEL_NORMS[1]["words_per_sent"][0] - 0.1},
+            "Предложения короче, чем в текстах этого уровня: объединяйте их.",
+        ),
     ],
-    ids=["words-q3", "letters-q3", "short-sentence", "below-long", "long-sentence"],
+    ids=[
+        "words-q3",
+        "letters-q3",
+        "short-sentence",
+        "above-short",
+        "below-long",
+        "long-sentence",
+        "words-q1",
+        "below-q1",
+    ],
 )
 def test_advice_thresholds(grade, gap, features, advice):
-    """Пороги совета у самых границ: верх нормы ступени, без норм - SHORT_SENTENCE и LONG_SENTENCE"""
+    """Пороги совета у самых границ нормы ступени, без норм - у верха норм 4-6 и 10-11 из ruTS"""
     current = Attempt(1, SIMPLE, replace(SIMPLE_M, **features), KEPT.checks, gap, 330)
     text = critique(current, [current], measure(DECREE), Target.from_grade(grade), FACTS)
     assert text.splitlines()[-1] == advice
@@ -271,7 +308,7 @@ def test_critique_between():
 def test_critique_between_norm():
     """Ступень с нормами: ориентир - нормы, признаков между попытками нет, история есть"""
     text = between(5)
-    assert "В текстах для этого уровня обычно 10,2-14,6 слова" in text
+    assert "В текстах для этого уровня обычно 10,1-14,6 слова" in text
     assert "между ними" not in text
     assert "Все попытки:" in text
 
