@@ -12,8 +12,9 @@ from .measure import Measurement, Target
 from .tasks import FactCheck, FactStatus
 
 STATE_TYPES = (Target, Measurement, FactCheck, FactStatus, Attempt, Outcome, Result)
-# Увеличивать при изменении полей State и классов из STATE_TYPES: старые потоки так не восстановить
-STATE_VERSION = 2
+# Увеличивать при изменении полей State и классов из STATE_TYPES и при смене минорной версии ruts
+# (измерения старого потока не совпадут с новыми): старые потоки так не восстановить
+STATE_VERSION = 3
 DATABASE = "checkpoints.sqlite"
 LOCKS = "locks"
 # Секунды ожидания, пока другой процесс создает таблицы новой базы

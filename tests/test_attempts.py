@@ -5,8 +5,6 @@ import pytest
 from ruts.constants import LEVEL_NORMS
 
 from ruts_adapt.attempts import (
-    LONG_SENTENCE,
-    SHORT_SENTENCE,
     Attempt,
     Outcome,
     Result,
@@ -221,28 +219,56 @@ def test_critique_long_sentences_simple():
         (
             8,
             1.0,
-            {"words_per_sent": SHORT_SENTENCE},
+            {"words_per_sent": LEVEL_NORMS[4]["words_per_sent"][1]},
             "Предложения уже короткие: не дробите их дальше, "
             "а заменяйте длинные слова и термины короткими и простыми.",
         ),
         (
+            8,
+            1.0,
+            {"words_per_sent": LEVEL_NORMS[4]["words_per_sent"][1] + 0.1},
+            "Делите длинные предложения и заменяйте длинные и многосложные слова короткими.",
+        ),
+        (
             10,
             -1.0,
-            {"words_per_sent": LONG_SENTENCE - 0.1},
+            {"words_per_sent": LEVEL_NORMS[10]["words_per_sent"][1] - 0.1},
             "Объединяйте короткие предложения и используйте более точные и длинные слова.",
         ),
         (
             10,
             -1.0,
-            {"words_per_sent": LONG_SENTENCE},
+            {"words_per_sent": LEVEL_NORMS[10]["words_per_sent"][1]},
             "Предложения уже длинные: не объединяйте их дальше, "
             "а используйте более точные и длинные слова.",
         ),
+        (
+            2,
+            -1.0,
+            {"words_per_sent": LEVEL_NORMS[1]["words_per_sent"][0]},
+            "Предложения уже не короче, чем в текстах этого уровня: не объединяйте их дальше, "
+            "а используйте более точные и длинные слова.",
+        ),
+        (
+            2,
+            -1.0,
+            {"words_per_sent": LEVEL_NORMS[1]["words_per_sent"][0] - 0.1},
+            "Предложения короче, чем в текстах этого уровня: объединяйте их.",
+        ),
     ],
-    ids=["words-q3", "letters-q3", "short-sentence", "below-long", "long-sentence"],
+    ids=[
+        "words-q3",
+        "letters-q3",
+        "short-sentence",
+        "above-short",
+        "below-long",
+        "long-sentence",
+        "words-q1",
+        "below-q1",
+    ],
 )
 def test_advice_thresholds(grade, gap, features, advice):
-    """Пороги совета у самых границ: верх нормы ступени, без норм - SHORT_SENTENCE и LONG_SENTENCE"""
+    """Пороги совета у самых границ нормы ступени, без норм - у верха норм 4-6 и 10-11 из ruTS"""
     current = Attempt(1, SIMPLE, replace(SIMPLE_M, **features), KEPT.checks, gap, 330)
     text = critique(current, [current], measure(DECREE), Target.from_grade(grade), FACTS)
     assert text.splitlines()[-1] == advice
