@@ -136,7 +136,7 @@ class Target:
         >>> target.direction(8.5), target.direction(6.0), target.direction(2.0)
         (<Direction.SIMPLIFY: 'simplify'>, <Direction.KEEP: 'keep'>, <Direction.COMPLICATE: 'complicate'>)
         >>> target.norm["words_per_sent"], Target.from_grade(8).norm, Target.from_grade(10).norm
-        ((10.2, 14.6), None, None)
+        ((10.1, 14.6), None, None)
     """
 
     grade: int
@@ -206,7 +206,7 @@ class Target:
 
         Пример использования:
             >>> Target.from_grade(2).describe_norm()
-            'обычно 8,1-10,7 слова в предложении, 4,56-5,03 буквы в слове и не больше 2,2% слов от пяти слогов'
+            'обычно 7,6-10,3 слова в предложении, 4,54-5,01 буквы в слове и не больше 2,1% слов от пяти слогов'
         """
         norm = self.norm
         if norm is None:
