@@ -30,6 +30,16 @@ def test_measure():
     assert m.mtld == DiversityStats(DECREE).mtld
 
 
+def test_measure_numbers():
+    """Класс, слова и слоги - без чисел, как у ReadabilityStats ruTS"""
+    text = "В 2026 году 5-й класс прочитал 1 250 000 страниц. Это много."
+    m = measure(text)
+    bs = BasicStats(text, filter_nums=True)
+    assert m.grade == ReadabilityStats(text).consensus_grade
+    assert m.grade != ReadabilityStats(BasicStats(text)).consensus_grade
+    assert (m.n_words, m.syllables_per_word) == (bs.n_words, bs.n_syllables / bs.n_words)
+
+
 def test_measure_order():
     """Сказка читается проще постановления: ниже класс, короче предложения и слова, меньше сложных"""
     tale, decree = measure(TALE), measure(DECREE)

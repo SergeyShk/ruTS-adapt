@@ -50,7 +50,9 @@ class Measurement:
         величины, из которых складываются эти формулы: длина предложения
         (все формулы), длина слова в слогах (Флеш-Кинкайд, индекс Флеша)
         и в буквах (Колман-Лиау, ARI, формула Соловьева, Иванова, Солнышкиной),
-        доля сложных слов - от 5 слогов (SMOG, Дейл-Чейл, Ганнинг)
+        доля сложных слов - от 5 слогов (SMOG, Дейл-Чейл, Ганнинг). Класс, слова,
+        предложения и слоги считаются без чисел, как в ReadabilityStats ruTS;
+        остальные признаки - с числами, как нормы ступеней (level_features)
 
     Атрибуты:
         grade (float): Сводный класс
@@ -96,7 +98,7 @@ def measure(text: str) -> Measurement:
         >>> m.words_per_sent, m.syllables_per_word, m.letters_per_word, m.complex_words
         (9.0, 2.0, 5.0, 0.0)
     """
-    bs = BasicStats(text)
+    bs = BasicStats(text, filter_nums=True)
     rs = ReadabilityStats(bs)
     features = level_features(text)
     return Measurement(
